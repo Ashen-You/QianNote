@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Xcode 的 GENERATE_INFOPLIST_FILE 只认白名单内的 INFOPLIST_KEY_ 设置，
+	     UIFileSharingEnabled 不在其中，必须写进真实 Info.plist 才会生效。
+	     该文件与自动生成的键合并，不需要重复写 CFBundle* 等键。 -->
+	<key>UIFileSharingEnabled</key>
+	<true/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
+</dict>
+</plist>
