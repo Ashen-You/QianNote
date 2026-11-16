@@ -64,7 +64,7 @@ struct NotePageView: View {
                           onDoubleTap: onDoubleTap,
                           onPencilDoubleTap: onPencilDoubleTap,
                           shapeRecognition: shapeRecognition,
-                          isShapeEligible: tools.activeTool == .pen || tools.activeTool == .pencil)
+                          isShapeEligible: tools.activeTool.supportsShapeSnap)
                 .frame(width: pageSize.width, height: pageSize.height)
 
             imageHandleLayer

@@ -145,7 +145,7 @@ struct ToolPaletteView: View {
                 }
             }
 
-            if tools.activeTool == .pen || tools.activeTool == .pencil {
+            if tools.activeTool.supportsShapeSnap {
                 Toggle(isOn: $tools.shapeRecognition) {
                     Text("形状识别")
                         .font(.caption2)

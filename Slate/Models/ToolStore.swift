@@ -7,6 +7,10 @@ import UIKit
 enum ToolKind: String, CaseIterable, Identifiable {
     case pen
     case pencil
+    case fountainPen
+    case monoline
+    case crayon
+    case watercolor
     case highlighter
     case eraser
     case lasso
@@ -18,6 +22,10 @@ enum ToolKind: String, CaseIterable, Identifiable {
         switch self {
         case .pen: return "钢笔"
         case .pencil: return "铅笔"
+        case .fountainPen: return "毛笔"
+        case .monoline: return "单线笔"
+        case .crayon: return "蜡笔"
+        case .watercolor: return "水彩"
         case .highlighter: return "荧光笔"
         case .eraser: return "橡皮"
         case .lasso: return "套索"
@@ -29,6 +37,10 @@ enum ToolKind: String, CaseIterable, Identifiable {
         switch self {
         case .pen: return "pencil.tip"
         case .pencil: return "pencil"
+        case .fountainPen: return "paintbrush.pointed.fill"
+        case .monoline: return "line.diagonal"
+        case .crayon: return "scribble"
+        case .watercolor: return "paintbrush.fill"
         case .highlighter: return "highlighter"
         case .eraser: return "eraser"
         case .lasso: return "lasso"
@@ -37,7 +49,20 @@ enum ToolKind: String, CaseIterable, Identifiable {
     }
 
     var isInk: Bool {
-        self == .pen || self == .pencil || self == .highlighter
+        switch self {
+        case .pen, .pencil, .fountainPen, .monoline, .crayon, .watercolor, .highlighter:
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// 形状识别只对"写字/画线"类笔生效
+    var supportsShapeSnap: Bool {
+        switch self {
+        case .pen, .pencil, .fountainPen, .monoline: return true
+        default: return false
+        }
     }
 
     var needsColor: Bool {
@@ -51,6 +76,10 @@ enum ToolKind: String, CaseIterable, Identifiable {
     var inkType: PKInk.InkType {
         switch self {
         case .pencil: return .pencil
+        case .fountainPen: return .fountainPen
+        case .monoline: return .monoline
+        case .crayon: return .crayon
+        case .watercolor: return .watercolor
         case .highlighter: return .marker
         default: return .pen
         }
@@ -58,10 +87,10 @@ enum ToolKind: String, CaseIterable, Identifiable {
 
     var widthRange: ClosedRange<CGFloat> {
         switch self {
-        case .pen: return 1...20
-        case .pencil: return 1...20
         case .highlighter: return 8...40
         case .eraser: return 8...60
+        case .watercolor: return 4...40
+        case .fountainPen: return 1...24
         default: return 1...20
         }
     }
@@ -70,6 +99,10 @@ enum ToolKind: String, CaseIterable, Identifiable {
         switch self {
         case .pen: return 3.5
         case .pencil: return 4
+        case .fountainPen: return 6
+        case .monoline: return 3
+        case .crayon: return 8
+        case .watercolor: return 14
         case .highlighter: return 18
         case .eraser: return 24
         default: return 4
@@ -81,6 +114,10 @@ enum ToolKind: String, CaseIterable, Identifiable {
         switch self {
         case .pen: return [1.5, 3, 6, 10]
         case .pencil: return [2, 4, 7, 12]
+        case .fountainPen: return [3, 6, 10, 16]
+        case .monoline: return [1.5, 3, 5, 8]
+        case .crayon: return [4, 8, 12, 18]
+        case .watercolor: return [6, 12, 20, 30]
         case .highlighter: return [10, 16, 24, 34]
         case .eraser: return [12, 24, 40, 60]
         default: return [2, 4, 8, 12]
@@ -91,6 +128,9 @@ enum ToolKind: String, CaseIterable, Identifiable {
         switch self {
         case .pencil: return Color(hex: "#3C3C43") ?? .black
         case .highlighter: return Color(hex: "#FFD84D") ?? .yellow
+        case .fountainPen: return Color(hex: "#101828") ?? .black
+        case .crayon: return Color(hex: "#C2410C") ?? .orange
+        case .watercolor: return Color(hex: "#2D6CDF") ?? .blue
         default: return Color(hex: "#1C1C1E") ?? .black
         }
     }
