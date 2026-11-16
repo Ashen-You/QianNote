@@ -134,6 +134,11 @@ final class ToolStore: ObservableObject {
     @Published private(set) var recentColors: [Color] = []
     private static let recentLimit = 6
 
+    /// 形状识别：画圆 / 方 / 三角 / 直线后自动规整
+    @Published var shapeRecognition: Bool = true {
+        didSet { defaults.set(shapeRecognition, forKey: "tool.shapeRecognition") }
+    }
+
     private let defaults = UserDefaults.standard
 
     init() {
@@ -171,6 +176,10 @@ final class ToolStore: ObservableObject {
 
         if let hexes = defaults.stringArray(forKey: "tool.recentColors") {
             recentColors = hexes.compactMap { Color(hex: $0) }
+        }
+
+        if defaults.object(forKey: "tool.shapeRecognition") != nil {
+            shapeRecognition = defaults.bool(forKey: "tool.shapeRecognition")
         }
     }
 

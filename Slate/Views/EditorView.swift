@@ -196,7 +196,8 @@ struct EditorView: View {
                          },
                          onPencilDoubleTap: {
                              tools.togglePencilEraser()
-                         })
+                         },
+                         shapeRecognition: tools.shapeRecognition)
                 .frame(width: pageWidth, height: pageHeight)
                 .scaleEffect(fit * zoom, anchor: .center)
                 .frame(width: contentWidth, height: contentHeight)

@@ -145,6 +145,15 @@ struct ToolPaletteView: View {
                 }
             }
 
+            if tools.activeTool == .pen || tools.activeTool == .pencil {
+                Toggle(isOn: $tools.shapeRecognition) {
+                    Text("形状识别")
+                        .font(.caption2)
+                }
+                .toggleStyle(.switch)
+                .tint(Theme.accent)
+            }
+
             if tools.activeTool == .eraser {
                 Picker("", selection: $tools.eraserMode) {
                     ForEach(ToolStore.EraserMode.allCases) { mode in
