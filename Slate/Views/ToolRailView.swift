@@ -74,6 +74,27 @@ struct ToolPaletteView: View {
                 .foregroundStyle(.secondary)
 
             if tools.activeTool.needsColor {
+                if !tools.recentColors.isEmpty {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("最近")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+
+                        HStack(spacing: 9) {
+                            ForEach(Array(tools.recentColors.enumerated()), id: \.offset) { _, color in
+                                Button {
+                                    tools.setColor(color, for: tools.activeTool)
+                                } label: {
+                                    ColorDot(color: color,
+                                             selected: tools.color(for: tools.activeTool) == color,
+                                             size: 24)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+                }
+
                 LazyVGrid(columns: columns, spacing: 9) {
                     ForEach(Array(InkPalette.colors.enumerated()), id: \.offset) { _, color in
                         Button {

@@ -25,6 +25,15 @@ struct EditorView: View {
     /// 工具面板（颜色 / 粗细）是否展开
     @State private var showPalette = true
 
+    /// 用户缩放倍率（1 = 适配整页）
+    @State private var zoom: CGFloat = 1
+    /// 缩放后的平移量（点）
+    @State private var pan: CGSize = .zero
+    /// 页面区域可视尺寸（用于夹取平移范围）
+    @State private var viewport: CGSize = .zero
+    /// 当前适配缩放（页面点数 → 屏幕点）
+    @State private var fitScale: CGFloat = 1
+
     enum EditorSheet: Identifiable {
         case share(URL)
         case paper
@@ -167,20 +176,161 @@ struct EditorView: View {
             let scaleToWidth = availableWidth / pageWidth
             let scaleToHeight = availableHeight / pageHeight
             // 全屏时可按宽度铺满（上下可滚动空间更大），否则取较小的那个保证整页可见
-            let scale = max(0.1, immersive && fitToWidth ? scaleToWidth : min(scaleToWidth, scaleToHeight))
+            let fit = max(0.1, immersive && fitToWidth ? scaleToWidth : min(scaleToWidth, scaleToHeight))
+            let contentWidth = pageWidth * fit * zoom
+            let contentHeight = pageHeight * fit * zoom
 
             NotePageView(note: note,
                          pageIndex: pageIndex,
                          tools: tools,
-                         controller: canvasController)
+                         controller: canvasController,
+                         pdfScale: pdfRenderScale(for: note.pageSize),
+                         onPinch: { delta, focal in
+                             applyPinch(delta, focal: focal, pageSize: note.pageSize, fit: fit)
+                         },
+                         onPan: { delta in
+                             applyPan(delta, contentSize: CGSize(width: contentWidth, height: contentHeight))
+                         },
+                         onDoubleTap: { focal in
+                             toggleZoom(focal: focal, pageSize: note.pageSize, fit: fit)
+                         },
+                         onPencilDoubleTap: {
+                             tools.togglePencilEraser()
+                         })
                 .frame(width: pageWidth, height: pageHeight)
-                .scaleEffect(scale, anchor: .center)
-                .frame(width: pageWidth * scale, height: pageHeight * scale)
+                .scaleEffect(fit * zoom, anchor: .center)
+                .frame(width: contentWidth, height: contentHeight)
                 .shadow(color: Color.black.opacity(immersive ? 0 : 0.18),
                         radius: immersive ? 0 : 22, x: 0, y: immersive ? 0 : 10)
+                .offset(clampedPan(contentSize: CGSize(width: contentWidth, height: contentHeight),
+                                   viewport: geo.size))
                 .frame(width: geo.size.width, height: geo.size.height)
                 .clipped()
+                .overlay(alignment: .bottomTrailing) {
+                    zoomBadge
+                        .padding(.trailing, 18)
+                        .padding(.bottom, immersive ? 74 : 18)
+                }
+                .onAppear {
+                    viewport = geo.size
+                    fitScale = fit
+                }
+                .onChange(of: geo.size) { _, newValue in
+                    viewport = newValue
+                    fitScale = fit
+                }
+                .onChange(of: pageIndex) { _, _ in
+                    resetZoom()
+                }
         }
+    }
+
+    // MARK: - 缩放平移
+
+    /// 缩放倍率对应的 PDF 渲染倍率：按档位取，避免每一帧都重新生成图片
+    private func pdfRenderScale(for pageSize: CGSize) -> CGFloat {
+        let base: CGFloat = zoom < 1.35 ? 3 : (zoom < 2.2 ? 4.5 : 6)
+        // 按像素总量设上限（约 1200 万像素 / 48 MB），防止大倍率下内存暴涨
+        let area = max(pageSize.width * pageSize.height, 1)
+        let density = sqrt(12_000_000 / area)
+        return min(base, max(2, density))
+    }
+
+    private var zoomBadge: some View {
+        Group {
+            if zoom > 1.02 {
+                HStack(spacing: 8) {
+                    Text(String(format: "%.1f×", zoom))
+                        .font(.system(.footnote, design: .rounded).weight(.semibold))
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+
+                    Button {
+                        withAnimation(.easeOut(duration: 0.22)) { resetZoom() }
+                    } label: {
+                        Image(systemName: "arrow.up.left.and.arrow.down.right")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(Theme.accent)
+                            .frame(width: 26, height: 26)
+                            .background(Circle().fill(Theme.accent.opacity(0.12)))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("恢复整页")
+                }
+                .padding(.leading, 10)
+                .padding(.trailing, 4)
+                .frame(height: 32)
+                .background(.regularMaterial, in: Capsule())
+                .overlay(Capsule().strokeBorder(Color.primary.opacity(0.07), lineWidth: 1))
+                .shadow(color: Color.black.opacity(0.12), radius: 10, x: 0, y: 4)
+                .transition(.opacity.combined(with: .scale(scale: 0.92)))
+            }
+        }
+    }
+
+    private func applyPinch(_ delta: CGFloat, focal: CGPoint, pageSize: CGSize, fit: CGFloat) {
+        let old = zoom
+        let new = min(max(old * delta, 1), 6)
+        guard abs(new - old) > 0.0005 else { return }
+
+        // 保持捏合中心点在屏幕上不动
+        let contentW = pageSize.width * fit * old
+        let contentH = pageSize.height * fit * old
+        let k = new / old
+        pan.width += contentW * (k - 1) * (0.5 - focal.x)
+        pan.height += contentH * (k - 1) * (0.5 - focal.y)
+
+        zoom = new
+        if new <= 1.001 {
+            pan = .zero
+        }
+        pan = clampedPan(contentSize: CGSize(width: pageSize.width * fit * new,
+                                             height: pageSize.height * fit * new),
+                         viewport: viewport)
+    }
+
+    private func applyPan(_ delta: CGSize, contentSize: CGSize) {
+        guard zoom > 1.001 else { return }
+        pan.width += delta.width
+        pan.height += delta.height
+        pan = clampedPan(contentSize: contentSize, viewport: viewport)
+    }
+
+    private func toggleZoom(focal: CGPoint, pageSize: CGSize, fit: CGFloat) {
+        if zoom > 1.05 {
+            withAnimation(.easeOut(duration: 0.24)) { resetZoom() }
+            return
+        }
+
+        let target: CGFloat = 2.2
+        let contentW = pageSize.width * fit
+        let contentH = pageSize.height * fit
+        var newPan = CGSize(width: pan.width + contentW * (target - 1) * (0.5 - focal.x),
+                            height: pan.height + contentH * (target - 1) * (0.5 - focal.y))
+        let targetSize = CGSize(width: pageSize.width * fit * target,
+                                height: pageSize.height * fit * target)
+        let maxX = max(0, (targetSize.width - viewport.width) / 2)
+        let maxY = max(0, (targetSize.height - viewport.height) / 2)
+        newPan.width = min(max(newPan.width, -maxX), maxX)
+        newPan.height = min(max(newPan.height, -maxY), maxY)
+
+        withAnimation(.easeOut(duration: 0.24)) {
+            zoom = target
+            pan = newPan
+        }
+    }
+
+    private func resetZoom() {
+        zoom = 1
+        pan = .zero
+    }
+
+    /// 内容比视口大时限制平移范围，避免页面被拖出屏幕
+    private func clampedPan(contentSize: CGSize, viewport: CGSize) -> CGSize {
+        let maxX = max(0, (contentSize.width - viewport.width) / 2)
+        let maxY = max(0, (contentSize.height - viewport.height) / 2)
+        return CGSize(width: min(max(pan.width, -maxX), maxX),
+                      height: min(max(pan.height, -maxY), maxY))
     }
 
     // MARK: - 全屏控件

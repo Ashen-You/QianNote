@@ -130,6 +130,10 @@ final class ToolStore: ObservableObject {
         var title: String { self == .stroke ? "整笔擦" : "像素擦" }
     }
 
+    /// 最近使用过的颜色（最多 6 个，与 Notability 一致）
+    @Published private(set) var recentColors: [Color] = []
+    private static let recentLimit = 6
+
     private let defaults = UserDefaults.standard
 
     init() {
@@ -164,6 +168,10 @@ final class ToolStore: ObservableObject {
         if storedFont > 0 {
             textFontSize = CGFloat(storedFont)
         }
+
+        if let hexes = defaults.stringArray(forKey: "tool.recentColors") {
+            recentColors = hexes.compactMap { Color(hex: $0) }
+        }
     }
 
     // MARK: 查询
@@ -184,6 +192,33 @@ final class ToolStore: ObservableObject {
     func setColor(_ color: Color, for tool: ToolKind) {
         colors[tool] = color
         defaults.set(color.hexString, forKey: "tool.color.\(tool.rawValue)")
+        if tool.needsColor {
+            recordRecent(color)
+        }
+    }
+
+    /// 记录最近使用的颜色
+    func recordRecent(_ color: Color) {
+        let hex = color.hexString
+        var list = recentColors.filter { $0.hexString != hex }
+        list.insert(color, at: 0)
+        if list.count > Self.recentLimit {
+            list = Array(list.prefix(Self.recentLimit))
+        }
+        recentColors = list
+        defaults.set(list.map { $0.hexString }, forKey: "tool.recentColors")
+    }
+
+    /// Apple Pencil 双击：笔 ↔ 橡皮
+    func togglePencilEraser() {
+        switch activeTool {
+        case .eraser:
+            activeTool = .pen
+        case .pen, .pencil, .highlighter:
+            activeTool = .eraser
+        default:
+            break
+        }
     }
 
     func setWidth(_ width: CGFloat, for tool: ToolKind) {

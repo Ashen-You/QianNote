@@ -11,6 +11,13 @@ struct NotePageView: View {
     @ObservedObject var tools: ToolStore
     let controller: CanvasController
 
+    /// PDF 底图渲染倍率（随缩放档位提高，保证放大后依然清晰）
+    var pdfScale: CGFloat = 3
+    var onPinch: ((CGFloat, CGPoint) -> Void)? = nil
+    var onPan: ((CGSize) -> Void)? = nil
+    var onDoubleTap: ((CGPoint) -> Void)? = nil
+    var onPencilDoubleTap: (() -> Void)? = nil
+
     @State private var selectedTextID: UUID?
     @State private var editingBox: TextBox?
     @State private var dragTranslation: CGSize = .zero
@@ -41,7 +48,11 @@ struct NotePageView: View {
                           controller: controller,
                           onChange: { drawing in
                               store.saveDrawing(drawing, noteID: note.id, pageID: pageID)
-                          })
+                          },
+                          onPinch: onPinch,
+                          onPan: onPan,
+                          onDoubleTap: onDoubleTap,
+                          onPencilDoubleTap: onPencilDoubleTap)
                 .frame(width: pageSize.width, height: pageSize.height)
 
             if tools.activeTool == .text {
@@ -73,7 +84,10 @@ struct NotePageView: View {
     @ViewBuilder
     private var background: some View {
         if note.hasPDF, note.pdfPageCount > pageIndex,
-           let image = store.pdfPageImage(noteID: note.id, pageIndex: pageIndex, size: pageSize) {
+           let image = store.pdfPageImage(noteID: note.id,
+                                          pageIndex: pageIndex,
+                                          size: pageSize,
+                                          scale: pdfScale) {
             ZStack {
                 Color.white
                 Image(uiImage: image)

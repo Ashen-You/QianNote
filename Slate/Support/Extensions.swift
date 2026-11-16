@@ -84,18 +84,34 @@ extension CGRect {
 // MARK: - 调色板
 
 enum InkPalette {
+    /// 24 色：深色系 / 彩色系 / 浅色荧光系各 8 个，贴近 Notability 的取色习惯
     static let colors: [Color] = [
-        Color(hex: "#1C1C1E") ?? .black,
+        // 深色系
+        Color(hex: "#000000") ?? .black,
+        Color(hex: "#3C3C43") ?? .black,
         Color(hex: "#6B7280") ?? .gray,
+        Color(hex: "#9CA3AF") ?? .gray,
+        Color(hex: "#1E3A8A") ?? .blue,
+        Color(hex: "#7F1D1D") ?? .red,
+        Color(hex: "#14532D") ?? .green,
+        Color(hex: "#4C1D95") ?? .purple,
+        // 彩色系
         Color(hex: "#E03A3A") ?? .red,
-        Color(hex: "#F07B24") ?? .orange,
+        Color(hex: "#F97316") ?? .orange,
         Color(hex: "#F2C230") ?? .yellow,
         Color(hex: "#3FA34D") ?? .green,
         Color(hex: "#0FA3A3") ?? .teal,
         Color(hex: "#2D6CDF") ?? .blue,
         Color(hex: "#5B4BE0") ?? .indigo,
         Color(hex: "#A64AC9") ?? .purple,
+        // 浅色 / 荧光系
         Color(hex: "#E5488F") ?? .pink,
-        Color(hex: "#8B5A2B") ?? .brown
+        Color(hex: "#8B5A2B") ?? .brown,
+        Color(hex: "#F9A8D4") ?? .pink,
+        Color(hex: "#FDE68A") ?? .yellow,
+        Color(hex: "#BBF7D0") ?? .green,
+        Color(hex: "#BAE6FD") ?? .blue,
+        Color(hex: "#DDD6FE") ?? .purple,
+        Color(hex: "#FED7AA") ?? .orange
     ]
 }

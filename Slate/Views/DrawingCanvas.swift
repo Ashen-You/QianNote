@@ -80,6 +80,15 @@ struct DrawingCanvas: UIViewRepresentable {
     let controller: CanvasController
     let onChange: (PKDrawing) -> Void
 
+    /// 双指捏合（增量倍率，归一化焦点 0...1）
+    var onPinch: ((CGFloat, CGPoint) -> Void)? = nil
+    /// 双指拖动（增量位移）
+    var onPan: ((CGSize) -> Void)? = nil
+    /// 双击（归一化位置）
+    var onDoubleTap: ((CGPoint) -> Void)? = nil
+    /// Apple Pencil 笔杆双击
+    var onPencilDoubleTap: (() -> Void)? = nil
+
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
     }
@@ -105,6 +114,8 @@ struct DrawingCanvas: UIViewRepresentable {
         controller.onDrawingRestored = { [weak coordinator] drawing in
             coordinator?.applyProgrammatic(drawing)
         }
+
+        coordinator.installGestures(on: canvas)
 
         return canvas
     }
@@ -137,9 +148,12 @@ struct DrawingCanvas: UIViewRepresentable {
             coordinator.isEnabled = isEnabled
             canvas.isUserInteractionEnabled = isEnabled
         }
+
+        // 手写模式（单指书写）下双击会被误判，只保留双指手势
+        coordinator.doubleTap?.isEnabled = !fingerDrawing
     }
 
-    final class Coordinator: NSObject, PKCanvasViewDelegate {
+    final class Coordinator: NSObject, PKCanvasViewDelegate, UIGestureRecognizerDelegate, UIPencilInteractionDelegate {
         var parent: DrawingCanvas
         weak var canvas: PKCanvasView?
         var currentPageID: UUID?
@@ -148,10 +162,98 @@ struct DrawingCanvas: UIViewRepresentable {
         var isEnabled: Bool = true
         private var isProgrammatic = false
 
+        private var lastScale: CGFloat = 1
+        private var lastTranslation: CGPoint = .zero
+        var doubleTap: UITapGestureRecognizer?
+
         init(_ parent: DrawingCanvas) {
             self.parent = parent
             self.drawingPolicy = parent.fingerDrawing ? .anyInput : .pencilOnly
             self.isEnabled = parent.isEnabled
+        }
+
+        // MARK: 双指手势（不抢占单指书写）
+
+        func installGestures(on canvas: PKCanvasView) {
+            canvas.isScrollEnabled = false   // 交给外层变换层统一控制
+
+            let pinch = UIPinchGestureRecognizer(target: self, action: #selector(handlePinch(_:)))
+            pinch.delegate = self
+            pinch.cancelsTouchesInView = true
+            canvas.addGestureRecognizer(pinch)
+
+            let pan = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
+            pan.minimumNumberOfTouches = 2
+            pan.maximumNumberOfTouches = 2
+            pan.delegate = self
+            pan.cancelsTouchesInView = true
+            canvas.addGestureRecognizer(pan)
+
+            let tap = UITapGestureRecognizer(target: self, action: #selector(handleDoubleTap(_:)))
+            tap.numberOfTapsRequired = 2
+            tap.delegate = self
+            tap.cancelsTouchesInView = true
+            tap.isEnabled = !parent.fingerDrawing
+            canvas.addGestureRecognizer(tap)
+            self.doubleTap = tap
+
+            let pencil = UIPencilInteraction()
+            pencil.delegate = self
+            canvas.addInteraction(pencil)
+        }
+
+        // MARK: Apple Pencil 双击
+
+        func pencilInteractionDidTap(_ interaction: UIPencilInteraction) {
+            parent.onPencilDoubleTap?()
+        }
+
+        @objc private func handlePinch(_ gesture: UIPinchGestureRecognizer) {
+            guard let canvas, let onPinch = parent.onPinch else { return }
+            switch gesture.state {
+            case .began:
+                lastScale = 1
+            case .changed:
+                let delta = gesture.scale / max(lastScale, 0.0001)
+                lastScale = gesture.scale
+                onPinch(delta, normalizedLocation(gesture.location(in: canvas), in: canvas))
+            default:
+                lastScale = 1
+            }
+        }
+
+        @objc private func handlePan(_ gesture: UIPanGestureRecognizer) {
+            guard let canvas, let onPan = parent.onPan else { return }
+            switch gesture.state {
+            case .began:
+                lastTranslation = .zero
+            case .changed:
+                let current = gesture.translation(in: canvas)
+                let delta = CGSize(width: current.x - lastTranslation.x,
+                                   height: current.y - lastTranslation.y)
+                lastTranslation = current
+                onPan(delta)
+            default:
+                lastTranslation = .zero
+            }
+        }
+
+        @objc private func handleDoubleTap(_ gesture: UITapGestureRecognizer) {
+            guard let canvas, let onDoubleTap = parent.onDoubleTap else { return }
+            onDoubleTap(normalizedLocation(gesture.location(in: canvas), in: canvas))
+        }
+
+        private func normalizedLocation(_ point: CGPoint, in canvas: PKCanvasView) -> CGPoint {
+            let w = max(canvas.bounds.width, 1)
+            let h = max(canvas.bounds.height, 1)
+            return CGPoint(x: min(max(point.x / w, 0), 1),
+                           y: min(max(point.y / h, 0), 1))
+        }
+
+        /// 允许多手势并存：双指捏合与双指拖动可同时进行
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                               shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
+            true
         }
 
         func applyProgrammatic(_ drawing: PKDrawing, notify: Bool = true) {
