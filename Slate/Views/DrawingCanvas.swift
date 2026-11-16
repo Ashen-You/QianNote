@@ -1,6 +1,7 @@
 import SwiftUI
 import PencilKit
 import UIKit
+import Combine
 
 // MARK: - 画布控制器（撤销 / 重做 / 恢复）
 
@@ -65,6 +66,62 @@ final class CanvasController: ObservableObject {
     private func isSame(_ lhs: PKDrawing, _ rhs: PKDrawing) -> Bool {
         guard lhs.strokes.count == rhs.strokes.count else { return false }
         return lhs.dataRepresentation() == rhs.dataRepresentation()
+    }
+}
+
+// MARK: - 每页一个撤销栈（连续滚动模式下多页同时存在）
+
+final class CanvasControllerPool: ObservableObject {
+    @Published private(set) var canUndo = false
+    @Published private(set) var canRedo = false
+    @Published private(set) var activePageID: UUID?
+
+    private var controllers: [UUID: CanvasController] = [:]
+    private var observers: [UUID: AnyCancellable] = [:]
+
+    func controller(for pageID: UUID) -> CanvasController {
+        if let existing = controllers[pageID] { return existing }
+
+        let controller = CanvasController()
+        controllers[pageID] = controller
+        observers[pageID] = controller.objectWillChange
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                guard let self, self.activePageID == pageID else { return }
+                DispatchQueue.main.async { self.refreshFlags() }
+            }
+        return controller
+    }
+
+    func activate(_ pageID: UUID) {
+        guard activePageID != pageID else {
+            refreshFlags()
+            return
+        }
+        activePageID = pageID
+        refreshFlags()
+    }
+
+    func undo() {
+        guard let id = activePageID else { return }
+        controllers[id]?.undo()
+        refreshFlags()
+    }
+
+    func redo() {
+        guard let id = activePageID else { return }
+        controllers[id]?.redo()
+        refreshFlags()
+    }
+
+    private func refreshFlags() {
+        guard let id = activePageID, let controller = controllers[id] else {
+            if canUndo { canUndo = false }
+            if canRedo { canRedo = false }
+            return
+        }
+        if canUndo != controller.canUndo { canUndo = controller.canUndo }
+        if canRedo != controller.canRedo { canRedo = controller.canRedo }
     }
 }
 

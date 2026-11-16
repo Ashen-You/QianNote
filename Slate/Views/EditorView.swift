@@ -10,7 +10,7 @@ struct EditorView: View {
     let noteID: UUID
 
     @StateObject private var tools = ToolStore()
-    @StateObject private var canvasController = CanvasController()
+    @StateObject private var controllers = CanvasControllerPool()
     @State private var audio = AudioController()
 
     @State private var pageIndex = 0
@@ -28,6 +28,8 @@ struct EditorView: View {
     @State private var showPalette = true
     @State private var showPhotoPicker = false
     @State private var photoItem: PhotosPickerItem?
+    /// 多页连续滚动（Notability 的阅读模式）
+    @State private var continuous = false
 
     /// 用户缩放倍率（1 = 适配整页）
     @State private var zoom: CGFloat = 1
@@ -148,7 +150,11 @@ struct EditorView: View {
                 .transition(.move(edge: .leading).combined(with: .opacity))
             }
 
-            pageArea(note)
+            if continuous {
+                continuousArea(note)
+            } else {
+                pageArea(note)
+            }
 
             if showPagePanel && !immersive {
                 PageStripView(note: note, pageIndex: $pageIndex)
@@ -168,6 +174,14 @@ struct EditorView: View {
         }
         .onAppear {
             pageIndex = min(pageIndex, max(note.pages.count - 1, 0))
+            if let page = note.pages[safe: pageIndex] {
+                controllers.activate(page.id)
+            }
+        }
+        .onChange(of: pageIndex) { _, newValue in
+            if let page = note.pages[safe: newValue] {
+                controllers.activate(page.id)
+            }
         }
         .onChange(of: note.pages.count) { _, newCount in
             if pageIndex >= newCount {
@@ -193,7 +207,7 @@ struct EditorView: View {
             NotePageView(note: note,
                          pageIndex: pageIndex,
                          tools: tools,
-                         controller: canvasController,
+                         controller: controllers.controller(for: currentPageID(note)),
                          pdfScale: pdfRenderScale(for: note.pageSize),
                          onPinch: { delta, focal in
                              applyPinch(delta, focal: focal,
@@ -231,6 +245,46 @@ struct EditorView: View {
                 .onChange(of: pageIndex) { _, _ in
                     resetZoom()
                 }
+        }
+    }
+
+    private func currentPageID(_ note: Note) -> UUID {
+        if let page = note.pages[safe: pageIndex] { return page.id }
+        return note.pages.first?.id ?? note.id
+    }
+
+    /// 多页纵向连续滚动：每页独立撤销栈，适合阅读长 PDF
+    private func continuousArea(_ note: Note) -> some View {
+        GeometryReader { geo in
+            let inset: CGFloat = immersive ? 6 : 20
+            let width = max(geo.size.width - inset * 2, 1)
+            let scale = width / max(note.pageSize.width, 1)
+            let pageHeight = max(note.pageSize.height * scale, 1)
+
+            ScrollView(.vertical, showsIndicators: false) {
+                LazyVStack(spacing: immersive ? 10 : 22) {
+                    ForEach(Array(note.pages.enumerated()), id: \.element.id) { index, page in
+                        NotePageView(note: note,
+                                     pageIndex: index,
+                                     tools: tools,
+                                     controller: controllers.controller(for: page.id),
+                                     pdfScale: 2.5,
+                                     shapeRecognition: tools.shapeRecognition)
+                            .frame(width: note.pageSize.width, height: note.pageSize.height)
+                            .scaleEffect(scale)
+                            .frame(width: width, height: pageHeight)
+                            .background(Color.white)
+                            .shadow(color: Color.black.opacity(immersive ? 0 : 0.14),
+                                    radius: immersive ? 0 : 14, x: 0, y: 4)
+                            .padding(.horizontal, inset)
+                            .onTapGesture {
+                                pageIndex = index
+                                controllers.activate(page.id)
+                            }
+                    }
+                }
+                .padding(.vertical, 20)
+            }
         }
     }
 
@@ -530,15 +584,15 @@ struct EditorView: View {
             HStack(spacing: 2) {
                 IconButton(systemName: "arrow.uturn.backward",
                            isActive: false,
-                           label: "撤销") { canvasController.undo() }
-                    .opacity(canvasController.canUndo ? 1 : 0.35)
-                    .disabled(!canvasController.canUndo)
+                           label: "撤销") { controllers.undo() }
+                    .opacity(controllers.canUndo ? 1 : 0.35)
+                    .disabled(!controllers.canUndo)
 
                 IconButton(systemName: "arrow.uturn.forward",
                            isActive: false,
-                           label: "重做") { canvasController.redo() }
-                    .opacity(canvasController.canRedo ? 1 : 0.35)
-                    .disabled(!canvasController.canRedo)
+                           label: "重做") { controllers.redo() }
+                    .opacity(controllers.canRedo ? 1 : 0.35)
+                    .disabled(!controllers.canRedo)
             }
             .padding(.horizontal, 4)
             .padding(.vertical, 2)
@@ -556,6 +610,12 @@ struct EditorView: View {
                        isActive: showPagePanel,
                        label: "页面缩略图") {
                 withAnimation(.easeInOut(duration: 0.2)) { showPagePanel.toggle() }
+            }
+
+            IconButton(systemName: continuous ? "rectangle.portrait" : "square.stack",
+                       isActive: continuous,
+                       label: "连续滚动") {
+                withAnimation(.easeInOut(duration: 0.2)) { continuous.toggle() }
             }
 
             IconButton(systemName: "arrow.up.left.and.arrow.down.right",
@@ -591,7 +651,9 @@ struct EditorView: View {
                     Label("插入新页面", systemImage: "plus.square")
                 }
                 Button {
-                    canvasController.resetHistory()
+                    if let note {
+                        controllers.controller(for: currentPageID(note)).resetHistory()
+                    }
                     store.clearPage(noteID: noteID, pageID: note?.pages[safe: pageIndex]?.id ?? UUID())
                 } label: {
                     Label("清空当前页", systemImage: "eraser.line.dashed")
