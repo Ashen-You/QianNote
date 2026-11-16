@@ -24,6 +24,13 @@ struct NotePageView: View {
     @State private var dragTranslation: CGSize = .zero
     @State private var draggingID: UUID?
 
+    // 图片对象
+    @State private var selectedImageID: UUID?
+    @State private var imageTranslation: CGSize = .zero
+    @State private var resizingTranslation: CGSize = .zero
+    @State private var draggingImageID: UUID?
+    @State private var resizingImageID: UUID?
+
     private static let fallbackPageID = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
 
     private var pageID: UUID {
@@ -39,6 +46,8 @@ struct NotePageView: View {
     var body: some View {
         ZStack(alignment: .topLeading) {
             background
+
+            imageVisualLayer
 
             DrawingCanvas(pageID: pageID,
                           initialDrawing: store.drawing(noteID: note.id, pageID: pageID),
@@ -57,6 +66,8 @@ struct NotePageView: View {
                           shapeRecognition: shapeRecognition,
                           isShapeEligible: tools.activeTool == .pen || tools.activeTool == .pencil)
                 .frame(width: pageSize.width, height: pageSize.height)
+
+            imageHandleLayer
 
             if tools.activeTool == .text {
                 Color.clear
@@ -102,6 +113,133 @@ struct NotePageView: View {
             PaperBackgroundView(template: note.paperTemplate, tint: note.paperTint)
                 .frame(width: pageSize.width, height: pageSize.height)
         }
+    }
+
+
+    // MARK: 图片对象
+
+    @ViewBuilder
+    private var imageVisualLayer: some View {
+        if let page, !page.images.isEmpty {
+            ZStack(alignment: .topLeading) {
+                ForEach(page.images) { item in
+                    if let ui = store.image(noteID: note.id, fileName: item.fileName) {
+                        Image(uiImage: ui)
+                            .resizable()
+                            .scaledToFill()
+                            .frame(width: CGFloat(item.width), height: CGFloat(item.height))
+                            .clipped()
+                            .offset(x: CGFloat(item.x), y: CGFloat(item.y))
+                    }
+                }
+            }
+            .frame(width: pageSize.width, height: pageSize.height, alignment: .topLeading)
+            .allowsHitTesting(false)
+        }
+    }
+
+    /// 套索模式下才出现：可拖动 / 缩放 / 删除图片
+    @ViewBuilder
+    private var imageHandleLayer: some View {
+        if let page, tools.activeTool == .lasso, !page.images.isEmpty {
+            ZStack(alignment: .topLeading) {
+                ForEach(page.images) { item in
+                    imageHandleView(item)
+                }
+            }
+            .frame(width: pageSize.width, height: pageSize.height, alignment: .topLeading)
+        }
+    }
+
+    private func imageHandleView(_ item: ImageItem) -> some View {
+        let isSelected = selectedImageID == item.id
+        let liveWidth = CGFloat(item.width) + (resizingImageID == item.id ? resizingTranslation.width : 0)
+        let liveHeight = CGFloat(item.height) + (resizingImageID == item.id ? resizingTranslation.height : 0)
+
+        return Rectangle()
+            .fill(Color.clear)
+            .frame(width: max(liveWidth, 40), height: max(liveHeight, 40))
+            .overlay(
+                Rectangle()
+                    .strokeBorder(isSelected ? Theme.accent : Color.clear, lineWidth: 1.5)
+            )
+            .overlay(alignment: .bottomTrailing) {
+                if isSelected {
+                    Circle()
+                        .fill(Theme.accent)
+                        .frame(width: 16, height: 16)
+                        .overlay(Circle().strokeBorder(Color.white, lineWidth: 2))
+                        .contentShape(Circle().inset(by: -12))
+                        .gesture(resizeGesture(item))
+                        .offset(x: 6, y: 6)
+                }
+            }
+            .overlay(alignment: .topTrailing) {
+                if isSelected {
+                    Button {
+                        store.updatePage(noteID: note.id, pageID: pageID) { page in
+                            page.images.removeAll { $0.id == item.id }
+                        }
+                        selectedImageID = nil
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 17))
+                            .foregroundStyle(.white, Color.red)
+                    }
+                    .buttonStyle(.plain)
+                    .offset(x: 11, y: -11)
+                }
+            }
+            .contentShape(Rectangle())
+            .onTapGesture { selectedImageID = item.id }
+            .gesture(moveGesture(item))
+            .offset(x: CGFloat(item.x) + (draggingImageID == item.id ? imageTranslation.width : 0),
+                    y: CGFloat(item.y) + (draggingImageID == item.id ? imageTranslation.height : 0))
+    }
+
+    private func moveGesture(_ item: ImageItem) -> some Gesture {
+        DragGesture(minimumDistance: 4)
+            .onChanged { value in
+                selectedImageID = item.id
+                draggingImageID = item.id
+                imageTranslation = value.translation
+            }
+            .onEnded { value in
+                var updated = item
+                updated.x += Double(value.translation.width)
+                updated.y += Double(value.translation.height)
+                updated.x = min(max(updated.x, -updated.width * 0.5), Double(pageSize.width) - updated.width * 0.5)
+                updated.y = min(max(updated.y, -updated.height * 0.5), Double(pageSize.height) - updated.height * 0.5)
+                store.updatePage(noteID: note.id, pageID: pageID) { page in
+                    if let index = page.images.firstIndex(where: { $0.id == item.id }) {
+                        page.images[index] = updated
+                    }
+                }
+                draggingImageID = nil
+                imageTranslation = .zero
+            }
+    }
+
+    private func resizeGesture(_ item: ImageItem) -> some Gesture {
+        DragGesture(minimumDistance: 2)
+            .onChanged { value in
+                resizingImageID = item.id
+                resizingTranslation = value.translation
+            }
+            .onEnded { value in
+                var updated = item
+                let ratio = item.height / max(item.width, 1)
+                let newWidth = max(60, item.width + Double(value.translation.width))
+                updated.width = newWidth
+                updated.height = max(60, newWidth * ratio)
+                store.updatePage(noteID: note.id, pageID: pageID) { page in
+                    if let index = page.images.firstIndex(where: { $0.id == item.id }) {
+                        page.images[index] = updated
+                    }
+                }
+                resizingImageID = nil
+                resizingTranslation = .zero
+            }
     }
 
     // MARK: 文字层

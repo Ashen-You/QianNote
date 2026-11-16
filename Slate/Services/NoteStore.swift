@@ -37,6 +37,7 @@ final class NoteStore: ObservableObject {
     private var drawingCache: [UUID: PKDrawing] = [:]
     private let thumbnailCache = NSCache<NSString, UIImage>()
     private let pdfPageCache = NSCache<NSString, UIImage>()
+    private let imageCache = NSCache<NSString, UIImage>()
     private var pdfDocuments: [UUID: PDFDocument] = [:]
 
     private var saveTask: Task<Void, Never>?
@@ -67,6 +68,7 @@ final class NoteStore: ObservableObject {
 
         thumbnailCache.countLimit = 400
         pdfPageCache.countLimit = 80
+        imageCache.countLimit = 120
 
         try? FileManager.default.createDirectory(at: notesURL, withIntermediateDirectories: true)
         load()
@@ -389,7 +391,10 @@ final class NoteStore: ObservableObject {
                                             pageIndex: pageIndex,
                                             drawing: drawing(noteID: noteID, pageID: pageID),
                                             pdf: pdfDocument(for: noteID),
-                                            maxWidth: 520)
+                                            maxWidth: 520,
+                                            imageLoader: { [weak self] name in
+                                                self?.image(noteID: noteID, fileName: name)
+                                            })
         thumbnailCache.setObject(image, forKey: pageID.uuidString as NSString)
 
         let data = image.pngData()
@@ -419,7 +424,10 @@ final class NoteStore: ObservableObject {
                                             pageIndex: pageIndex,
                                             drawing: drawing(noteID: noteID, pageID: pageID),
                                             pdf: pdfDocument(for: noteID),
-                                            maxWidth: 520)
+                                            maxWidth: 520,
+                                            imageLoader: { [weak self] name in
+                                                self?.image(noteID: noteID, fileName: name)
+                                            })
         thumbnailCache.setObject(image, forKey: pageID.uuidString as NSString)
 
         let data = image.pngData()
@@ -494,7 +502,12 @@ final class NoteStore: ObservableObject {
     func exportPDF(noteID: UUID) -> URL? {
         guard let note = note(id: noteID) else { return nil }
         let drawings = note.pages.map { drawing(noteID: noteID, pageID: $0.id) }
-        let data = PageRenderer.pdfData(note: note, drawings: drawings, pdf: pdfDocument(for: noteID))
+        let data = PageRenderer.pdfData(note: note,
+                                        drawings: drawings,
+                                        pdf: pdfDocument(for: noteID),
+                                        imageLoader: { [weak self] name in
+                                            self?.image(noteID: noteID, fileName: name)
+                                        })
 
         let safeTitle = note.title
             .replacingOccurrences(of: "/", with: "-")
@@ -561,6 +574,25 @@ final class NoteStore: ObservableObject {
 
     func noteFolder(_ noteID: UUID) -> URL {
         notesURL.appendingPathComponent(noteID.uuidString, isDirectory: true)
+    }
+
+    // MARK: 页面图片
+
+    /// 把图片写进笔记目录，返回文件名
+    func saveImage(_ data: Data, noteID: UUID) throws -> String {
+        let name = "img_\(UUID().uuidString).png"
+        let url = noteFolder(noteID).appendingPathComponent(name)
+        try data.write(to: url, options: .atomic)
+        return name
+    }
+
+    func image(noteID: UUID, fileName: String) -> UIImage? {
+        let key = "\(noteID.uuidString)-\(fileName)" as NSString
+        if let cached = imageCache.object(forKey: key) { return cached }
+        let url = noteFolder(noteID).appendingPathComponent(fileName)
+        guard let image = UIImage(contentsOfFile: url.path) else { return nil }
+        imageCache.setObject(image, forKey: key)
+        return image
     }
 
     private func drawingURL(noteID: UUID, pageID: UUID) -> URL {

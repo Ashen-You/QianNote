@@ -100,7 +100,8 @@ enum PageRenderer {
                            drawing: PKDrawing,
                            pdf: PDFDocument?,
                            maxWidth: CGFloat? = nil,
-                           inkScale: CGFloat = 2) -> UIImage {
+                           inkScale: CGFloat = 2,
+                           imageLoader: ((String) -> UIImage?)? = nil) -> UIImage {
         let pageSize = note.pageSize
         let outputScale: CGFloat = {
             guard let maxWidth, maxWidth > 0, maxWidth < pageSize.width else { return 1 }
@@ -119,6 +120,7 @@ enum PageRenderer {
             cg.scaleBy(x: outputScale, y: outputScale)
 
             drawContent(note: note, pageIndex: pageIndex, pdf: pdf, in: cg, size: pageSize)
+            drawImages(note: note, pageIndex: pageIndex, loader: imageLoader, size: pageSize)
 
             if let ink = inkImage(drawing: drawing, size: pageSize, scale: inkScale) {
                 ink.draw(in: CGRect(origin: .zero, size: pageSize))
@@ -186,6 +188,26 @@ enum PageRenderer {
         return drawing.image(from: CGRect(origin: .zero, size: size), scale: scale)
     }
 
+    // MARK: - 图片
+
+    static func drawImages(note: Note, pageIndex: Int,
+                           loader: ((String) -> UIImage?)?,
+                           size: CGSize) {
+        guard let loader,
+              let page = note.pages[safe: pageIndex],
+              !page.images.isEmpty else { return }
+
+        for item in page.images {
+            guard let image = loader(item.fileName) else { continue }
+            let rect = CGRect(x: item.x, y: item.y, width: item.width, height: item.height)
+            let cg = UIGraphicsGetCurrentContext()
+            cg?.saveGState()
+            cg?.clip(to: rect)
+            image.draw(in: rect)
+            cg?.restoreGState()
+        }
+    }
+
     // MARK: - 文本框
 
     static func drawText(note: Note, pageIndex: Int, in cg: CGContext, size: CGSize) {
@@ -209,7 +231,8 @@ enum PageRenderer {
 
     // MARK: - 导出 PDF
 
-    static func pdfData(note: Note, drawings: [PKDrawing], pdf: PDFDocument?) -> Data {
+    static func pdfData(note: Note, drawings: [PKDrawing], pdf: PDFDocument?,
+                        imageLoader: ((String) -> UIImage?)? = nil) -> Data {
         let pageRect = CGRect(origin: .zero, size: note.pageSize)
         let renderer = UIGraphicsPDFRenderer(bounds: pageRect)
 
@@ -219,6 +242,7 @@ enum PageRenderer {
                 let cg = context.cgContext
 
                 drawContent(note: note, pageIndex: index, pdf: pdf, in: cg, size: note.pageSize)
+                drawImages(note: note, pageIndex: index, loader: imageLoader, size: note.pageSize)
 
                 if let ink = inkImage(drawing: drawing, size: note.pageSize, scale: 2) {
                     ink.draw(in: pageRect)

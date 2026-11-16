@@ -1,5 +1,7 @@
 import SwiftUI
 import PencilKit
+import PhotosUI
+import UIKit
 
 struct EditorView: View {
     @EnvironmentObject private var store: NoteStore
@@ -24,15 +26,13 @@ struct EditorView: View {
     @State private var fitToWidth = false
     /// 工具面板（颜色 / 粗细）是否展开
     @State private var showPalette = true
+    @State private var showPhotoPicker = false
+    @State private var photoItem: PhotosPickerItem?
 
     /// 用户缩放倍率（1 = 适配整页）
     @State private var zoom: CGFloat = 1
     /// 缩放后的平移量（点）
     @State private var pan: CGSize = .zero
-    /// 页面区域可视尺寸（用于夹取平移范围）
-    @State private var viewport: CGSize = .zero
-    /// 当前适配缩放（页面点数 → 屏幕点）
-    @State private var fitScale: CGFloat = 1
 
     enum EditorSheet: Identifiable {
         case share(URL)
@@ -86,6 +86,16 @@ struct EditorView: View {
             if immersive, let note {
                 immersiveControls(note)
                     .transition(.opacity)
+            }
+        }
+        .photosPicker(isPresented: $showPhotoPicker, selection: $photoItem, matching: .images)
+        .onChange(of: photoItem) { _, newValue in
+            guard let newValue else { return }
+            Task { @MainActor in
+                if let data = try? await newValue.loadTransferable(type: Data.self) {
+                    insertImage(data)
+                }
+                photoItem = nil
             }
         }
         .sheet(item: $sheet) { item in
@@ -186,13 +196,16 @@ struct EditorView: View {
                          controller: canvasController,
                          pdfScale: pdfRenderScale(for: note.pageSize),
                          onPinch: { delta, focal in
-                             applyPinch(delta, focal: focal, pageSize: note.pageSize, fit: fit)
+                             applyPinch(delta, focal: focal,
+                                        pageSize: note.pageSize, fit: fit, viewport: geo.size)
                          },
                          onPan: { delta in
-                             applyPan(delta, contentSize: CGSize(width: contentWidth, height: contentHeight))
+                             applyPan(delta,
+                                      contentSize: CGSize(width: contentWidth, height: contentHeight),
+                                      viewport: geo.size)
                          },
                          onDoubleTap: { focal in
-                             toggleZoom(focal: focal, pageSize: note.pageSize, fit: fit)
+                             toggleZoom(focal: focal, pageSize: note.pageSize, fit: fit, viewport: geo.size)
                          },
                          onPencilDoubleTap: {
                              tools.togglePencilEraser()
@@ -211,14 +224,6 @@ struct EditorView: View {
                     zoomBadge
                         .padding(.trailing, 18)
                         .padding(.bottom, immersive ? 74 : 18)
-                }
-                .onAppear {
-                    viewport = geo.size
-                    fitScale = fit
-                }
-                .onChange(of: geo.size) { _, newValue in
-                    viewport = newValue
-                    fitScale = fit
                 }
                 .onChange(of: pageIndex) { _, _ in
                     resetZoom()
@@ -269,7 +274,8 @@ struct EditorView: View {
         }
     }
 
-    private func applyPinch(_ delta: CGFloat, focal: CGPoint, pageSize: CGSize, fit: CGFloat) {
+    private func applyPinch(_ delta: CGFloat, focal: CGPoint,
+                            pageSize: CGSize, fit: CGFloat, viewport: CGSize) {
         let old = zoom
         let new = min(max(old * delta, 1), 6)
         guard abs(new - old) > 0.0005 else { return }
@@ -290,14 +296,14 @@ struct EditorView: View {
                          viewport: viewport)
     }
 
-    private func applyPan(_ delta: CGSize, contentSize: CGSize) {
+    private func applyPan(_ delta: CGSize, contentSize: CGSize, viewport: CGSize) {
         guard zoom > 1.001 else { return }
         pan.width += delta.width
         pan.height += delta.height
         pan = clampedPan(contentSize: contentSize, viewport: viewport)
     }
 
-    private func toggleZoom(focal: CGPoint, pageSize: CGSize, fit: CGFloat) {
+    private func toggleZoom(focal: CGPoint, pageSize: CGSize, fit: CGFloat, viewport: CGSize) {
         if zoom > 1.05 {
             withAnimation(.easeOut(duration: 0.24)) { resetZoom() }
             return
@@ -521,6 +527,12 @@ struct EditorView: View {
 
             Menu {
                 Button {
+                    showPhotoPicker = true
+                } label: {
+                    Label("插入图片", systemImage: "photo.on.rectangle")
+                }
+
+                Button {
                     sheet = .paper
                 } label: {
                     Label("纸张样式", systemImage: "square.grid.2x2")
@@ -720,6 +732,36 @@ struct EditorView: View {
     }
 
     // MARK: - 导出
+
+    private func insertImage(_ data: Data) {
+        guard let ui = UIImage(data: data) else {
+            errorMessage = "这张图片无法读取"
+            return
+        }
+        guard let note, note.pages.indices.contains(pageIndex) else { return }
+
+        do {
+            let fileName = try store.saveImage(data, noteID: noteID)
+            let pageID = note.pages[pageIndex].id
+            let maxWidth = min(note.pageSize.width * 0.62, 520)
+            let ratio = ui.size.height / max(ui.size.width, 1)
+            let width = maxWidth
+            let height = min(maxWidth * ratio, note.pageSize.height * 0.82)
+
+            let item = ImageItem(fileName: fileName,
+                                 x: (note.pageSize.width - width) / 2,
+                                 y: (note.pageSize.height - height) / 2,
+                                 width: width,
+                                 height: height)
+            store.updatePage(noteID: noteID, pageID: pageID) { page in
+                page.images.append(item)
+            }
+            // 切到套索，方便立刻拖动 / 缩放刚插入的图片
+            tools.activeTool = .lasso
+        } catch {
+            errorMessage = "插入图片失败：\(error.localizedDescription)"
+        }
+    }
 
     private func exportPDF() {
         guard let url = store.exportPDF(noteID: noteID) else { return }

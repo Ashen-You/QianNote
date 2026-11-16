@@ -30,11 +30,23 @@ struct AudioMarker: Identifiable, Codable, Hashable {
     var time: TimeInterval
 }
 
+// MARK: - 页面上的图片
+
+struct ImageItem: Identifiable, Codable, Hashable {
+    var id: UUID = UUID()
+    var fileName: String
+    var x: Double
+    var y: Double
+    var width: Double
+    var height: Double
+}
+
 // MARK: - 单页
 
 struct NotePage: Identifiable, Codable, Hashable {
     var id: UUID = UUID()
     var textBoxes: [TextBox] = []
+    var images: [ImageItem] = []
 }
 
 // MARK: - 笔记
