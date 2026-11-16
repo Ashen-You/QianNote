@@ -533,6 +533,14 @@ struct EditorView: View {
                 }
 
                 Button {
+                    if let url = store.exportPageImage(noteID: noteID, pageIndex: pageIndex) {
+                        sheet = .share(url)
+                    }
+                } label: {
+                    Label("导出本页图片", systemImage: "photo.badge.arrow.down")
+                }
+
+                Button {
                     sheet = .paper
                 } label: {
                     Label("纸张样式", systemImage: "square.grid.2x2")

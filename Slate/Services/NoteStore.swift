@@ -524,6 +524,37 @@ final class NoteStore: ObservableObject {
         }
     }
 
+    /// 把某一页导出为 PNG（含 PDF 底稿、图片、笔迹与文字）
+    func exportPageImage(noteID: UUID, pageIndex: Int) -> URL? {
+        guard let note = note(id: noteID), note.pages.indices.contains(pageIndex) else { return nil }
+        let pageID = note.pages[pageIndex].id
+        let image = PageRenderer.renderPage(note: note,
+                                            pageIndex: pageIndex,
+                                            drawing: drawing(noteID: noteID, pageID: pageID),
+                                            pdf: pdfDocument(for: noteID),
+                                            inkScale: 3,
+                                            imageLoader: { [weak self] name in
+                                                self?.image(noteID: noteID, fileName: name)
+                                            })
+        guard let data = image.pngData() else {
+            errorMessage = "导出图片失败"
+            return nil
+        }
+        let safeTitle = note.title
+            .replacingOccurrences(of: "/", with: "-")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let name = (safeTitle.isEmpty ? "Slate" : safeTitle) + "-第\(pageIndex + 1)页"
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(name)-\(Int(Date().timeIntervalSince1970)).png")
+        do {
+            try data.write(to: url, options: .atomic)
+            return url
+        } catch {
+            errorMessage = "导出图片失败：\(error.localizedDescription)"
+            return nil
+        }
+    }
+
     // MARK: - 录音
 
     func audioURL(noteID: UUID) -> URL {
