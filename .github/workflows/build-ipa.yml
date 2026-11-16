@@ -6,11 +6,6 @@ on:
     branches: [ main, master ]
   workflow_dispatch:
 
-# 同一分支只保留最新一次构建，避免重复占用 macOS 分钟数
-concurrency:
-  group: ipa-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
   build:
     # macos-14 的机器池比 macos-15(arm64) 更容易分到，跨平台编译 iOS 产物结果一致
