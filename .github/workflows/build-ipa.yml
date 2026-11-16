@@ -1,0 +1,53 @@
+name: Build unsigned IPA
+
+# 推送代码或手动点按钮都会触发；在 macOS 云端机器上编译，产出未签名 .ipa
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+
+      - name: Build archive (no code signing)
+        run: |
+          xcodebuild archive \
+            -project Slate.xcodeproj \
+            -scheme Slate \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -archivePath build/Slate.xcarchive \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            ENABLE_BITCODE=NO \
+            ONLY_ACTIVE_ARCH=NO
+
+      - name: Package Payload into IPA
+        run: |
+          APP="build/Slate.xcarchive/Products/Applications/Slate.app"
+          test -d "$APP" || { echo "找不到 Slate.app，归档失败"; exit 1; }
+          mkdir -p build/Payload
+          cp -R "$APP" build/Payload/
+          cd build
+          zip -qry Slate-unsigned.ipa Payload
+          ls -lh Slate-unsigned.ipa
+          /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" Slate.xcarchive/Products/Applications/Slate.app/Info.plist || true
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: Slate-unsigned-ipa
+          path: build/Slate-unsigned.ipa
+          if-no-files-found: error
