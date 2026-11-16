@@ -76,6 +76,17 @@ enum ToolKind: String, CaseIterable, Identifiable {
         }
     }
 
+    /// 常用粗细档位（对应 Notability 的几档笔尖大小）
+    var widthPresets: [CGFloat] {
+        switch self {
+        case .pen: return [1.5, 3, 6, 10]
+        case .pencil: return [2, 4, 7, 12]
+        case .highlighter: return [10, 16, 24, 34]
+        case .eraser: return [12, 24, 40, 60]
+        default: return [2, 4, 8, 12]
+        }
+    }
+
     var defaultColor: Color {
         switch self {
         case .pencil: return Color(hex: "#3C3C43") ?? .black
@@ -106,6 +117,19 @@ final class ToolStore: ObservableObject {
         didSet { defaults.set(fingerDrawing, forKey: "tool.fingerDrawing") }
     }
 
+    /// 橡皮模式：整笔擦（vector）/ 像素擦（bitmap）
+    @Published var eraserMode: EraserMode = .stroke {
+        didSet { defaults.set(eraserMode.rawValue, forKey: "tool.eraserMode") }
+    }
+
+    enum EraserMode: String, CaseIterable, Identifiable {
+        case stroke
+        case pixel
+
+        var id: String { rawValue }
+        var title: String { self == .stroke ? "整笔擦" : "像素擦" }
+    }
+
     private let defaults = UserDefaults.standard
 
     init() {
@@ -129,6 +153,11 @@ final class ToolStore: ObservableObject {
 
         if defaults.object(forKey: "tool.fingerDrawing") != nil {
             fingerDrawing = defaults.bool(forKey: "tool.fingerDrawing")
+        }
+
+        if let raw = defaults.string(forKey: "tool.eraserMode"),
+           let mode = EraserMode(rawValue: raw) {
+            eraserMode = mode
         }
 
         let storedFont = defaults.double(forKey: "text.fontSize")
@@ -179,7 +208,8 @@ final class ToolStore: ObservableObject {
     var pkTool: PKTool {
         switch activeTool {
         case .eraser:
-            return PKEraserTool(.vector, width: width(for: .eraser))
+            let style: PKEraserTool.EraserType = eraserMode == .stroke ? .vector : .bitmap
+            return PKEraserTool(style, width: width(for: .eraser))
         case .lasso, .text:
             return PKLassoTool()
         default:
@@ -189,6 +219,6 @@ final class ToolStore: ObservableObject {
 
     /// 用于判断是否需要把工具同步给 PKCanvasView（避免每次刷新都重设工具）
     var toolKey: String {
-        "\(activeTool.rawValue)|\(activeColor.hexString)|\(activeWidth)|\(fingerDrawing)"
+        "\(activeTool.rawValue)|\(activeColor.hexString)|\(activeWidth)|\(fingerDrawing)|\(eraserMode.rawValue)"
     }
 }

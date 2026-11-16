@@ -22,6 +22,8 @@ struct EditorView: View {
     @State private var immersive = false
     /// 全屏时按宽度还是按高度适配
     @State private var fitToWidth = false
+    /// 工具面板（颜色 / 粗细）是否展开
+    @State private var showPalette = true
 
     enum EditorSheet: Identifiable {
         case share(URL)
@@ -114,10 +116,17 @@ struct EditorView: View {
     private func workspace(_ note: Note) -> some View {
         HStack(spacing: 0) {
             if !immersive {
-                ToolRailView(tools: tools)
-                    .padding(.leading, 12)
-                    .frame(maxHeight: .infinity, alignment: .center)
-                    .transition(.move(edge: .leading).combined(with: .opacity))
+                HStack(alignment: .center, spacing: 8) {
+                    ToolRailView(tools: tools, showPalette: $showPalette)
+
+                    if showPalette {
+                        ToolPaletteView(tools: tools)
+                            .transition(.move(edge: .leading).combined(with: .opacity))
+                    }
+                }
+                .padding(.leading, 12)
+                .frame(maxHeight: .infinity, alignment: .center)
+                .transition(.move(edge: .leading).combined(with: .opacity))
             }
 
             pageArea(note)
@@ -415,9 +424,7 @@ struct EditorView: View {
     // MARK: - 底栏
 
     private var bottomBar: some View {
-        HStack(spacing: 14) {
-            StyleBarView(tools: tools)
-
+        HStack(spacing: 12) {
             if let note {
                 pageIndicator(note)
             }
