@@ -210,7 +210,10 @@ struct EditorView: View {
                          onPencilDoubleTap: {
                              tools.togglePencilEraser()
                          },
-                         shapeRecognition: tools.shapeRecognition)
+                         shapeRecognition: tools.shapeRecognition,
+                         onPenMove: { point in
+                             followPen(point, pageSize: note.pageSize, fit: fit, viewport: geo.size)
+                         })
                 .frame(width: pageWidth, height: pageHeight)
                 .scaleEffect(fit * zoom, anchor: .center)
                 .frame(width: contentWidth, height: contentHeight)
@@ -334,10 +337,46 @@ struct EditorView: View {
 
     /// 内容比视口大时限制平移范围，避免页面被拖出屏幕
     private func clampedPan(contentSize: CGSize, viewport: CGSize) -> CGSize {
+        clampedPan(pan, contentSize: contentSize, viewport: viewport)
+    }
+
+    private func clampedPan(_ value: CGSize, contentSize: CGSize, viewport: CGSize) -> CGSize {
         let maxX = max(0, (contentSize.width - viewport.width) / 2)
         let maxY = max(0, (contentSize.height - viewport.height) / 2)
-        return CGSize(width: min(max(pan.width, -maxX), maxX),
-                      height: min(max(pan.height, -maxY), maxY))
+        return CGSize(width: min(max(value.width, -maxX), maxX),
+                      height: min(max(value.height, -maxY), maxY))
+    }
+
+    /// 放大书写时让页面跟着笔尖走：写到可见区域边缘就把纸往前推
+    private func followPen(_ normalized: CGPoint, pageSize: CGSize, fit: CGFloat, viewport: CGSize) {
+        guard zoom > 1.05, viewport.width > 1, viewport.height > 1 else { return }
+
+        let scale = fit * zoom
+        let visibleWidth = viewport.width / scale
+        let visibleHeight = viewport.height / scale
+        let pageCenter = CGPoint(x: pageSize.width / 2, y: pageSize.height / 2)
+
+        // 当前可见区域在页面坐标系中的范围
+        let offsetX = -pan.width / scale
+        let offsetY = -pan.height / scale
+        let minX = pageCenter.x + offsetX - visibleWidth / 2
+        let maxX = pageCenter.x + offsetX + visibleWidth / 2
+        let minY = pageCenter.y + offsetY - visibleHeight / 2
+        let maxY = pageCenter.y + offsetY + visibleHeight / 2
+
+        let point = CGPoint(x: normalized.x * pageSize.width, y: normalized.y * pageSize.height)
+        let margin = 110 / scale
+
+        var updated = pan
+        if point.y > maxY - margin { updated.height -= (point.y - (maxY - margin)) * scale }
+        if point.y < minY + margin { updated.height += ((minY + margin) - point.y) * scale }
+        if point.x > maxX - margin { updated.width -= (point.x - (maxX - margin)) * scale }
+        if point.x < minX + margin { updated.width += ((minX + margin) - point.x) * scale }
+
+        guard updated != pan else { return }
+        pan = clampedPan(updated,
+                         contentSize: CGSize(width: pageSize.width * scale, height: pageSize.height * scale),
+                         viewport: viewport)
     }
 
     // MARK: - 全屏控件

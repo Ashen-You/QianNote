@@ -68,6 +68,24 @@ final class CanvasController: ObservableObject {
     }
 }
 
+// MARK: - 会汇报触点的画布
+
+/// PKCanvasView 本身不暴露触点位置，这里子类化后再交给父类处理，
+/// 用于「放大书写时页面跟随笔尖自动平移」。
+final class TrackingCanvasView: PKCanvasView {
+    var onTouch: ((CGPoint) -> Void)?
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        super.touchesBegan(touches, with: event)
+        if let point = touches.first?.location(in: self) { onTouch?(point) }
+    }
+
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
+        super.touchesMoved(touches, with: event)
+        if let point = touches.first?.location(in: self) { onTouch?(point) }
+    }
+}
+
 // MARK: - SwiftUI 包装
 
 struct DrawingCanvas: UIViewRepresentable {
@@ -92,13 +110,15 @@ struct DrawingCanvas: UIViewRepresentable {
     var shapeRecognition: Bool = false
     /// 当前工具是否适合形状识别（钢笔 / 铅笔）
     var isShapeEligible: Bool = false
+    /// 书写中触点位置（归一化 0...1），用于放大书写时自动跟手
+    var onPenMove: ((CGPoint) -> Void)? = nil
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
     }
 
     func makeUIView(context: Context) -> PKCanvasView {
-        let canvas = PKCanvasView()
+        let canvas = TrackingCanvasView()
         canvas.backgroundColor = .clear
         canvas.isOpaque = false
         canvas.isScrollEnabled = false
@@ -120,6 +140,11 @@ struct DrawingCanvas: UIViewRepresentable {
         }
 
         coordinator.installGestures(on: canvas)
+        coordinator.trackingCanvas = canvas as? TrackingCanvasView
+        coordinator.trackingCanvas?.onTouch = { [weak coordinator] point in
+            guard let coordinator, let canvas = coordinator.trackingCanvas else { return }
+            coordinator.parent.onPenMove?(coordinator.normalize(point, in: canvas))
+        }
 
         return canvas
     }
@@ -171,6 +196,7 @@ struct DrawingCanvas: UIViewRepresentable {
         private var lastTranslation: CGPoint = .zero
         private var pendingSnap: DispatchWorkItem?
         var doubleTap: UITapGestureRecognizer?
+        weak var trackingCanvas: TrackingCanvasView?
 
         init(_ parent: DrawingCanvas) {
             self.parent = parent
@@ -254,6 +280,10 @@ struct DrawingCanvas: UIViewRepresentable {
         }
 
         private func normalizedLocation(_ point: CGPoint, in canvas: PKCanvasView) -> CGPoint {
+            normalize(point, in: canvas)
+        }
+
+        func normalize(_ point: CGPoint, in canvas: PKCanvasView) -> CGPoint {
             let w = max(canvas.bounds.width, 1)
             let h = max(canvas.bounds.height, 1)
             return CGPoint(x: min(max(point.x / w, 0), 1),

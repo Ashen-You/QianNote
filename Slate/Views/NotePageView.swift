@@ -18,6 +18,7 @@ struct NotePageView: View {
     var onDoubleTap: ((CGPoint) -> Void)? = nil
     var onPencilDoubleTap: (() -> Void)? = nil
     var shapeRecognition: Bool = false
+    var onPenMove: ((CGPoint) -> Void)? = nil
 
     @State private var selectedTextID: UUID?
     @State private var editingBox: TextBox?
@@ -64,7 +65,8 @@ struct NotePageView: View {
                           onDoubleTap: onDoubleTap,
                           onPencilDoubleTap: onPencilDoubleTap,
                           shapeRecognition: shapeRecognition,
-                          isShapeEligible: tools.activeTool.supportsShapeSnap)
+                          isShapeEligible: tools.activeTool.supportsShapeSnap,
+                          onPenMove: onPenMove)
                 .frame(width: pageSize.width, height: pageSize.height)
 
             imageHandleLayer
