@@ -8,9 +8,7 @@ on:
 
 jobs:
   build:
-    # macos-14 的机器池比 macos-15(arm64) 更容易分到，跨平台编译 iOS 产物结果一致
-    runs-on: macos-14
-    timeout-minutes: 45
+    runs-on: macos-15
 
     steps:
       - name: Checkout
