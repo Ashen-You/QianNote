@@ -142,17 +142,45 @@ enum PageRenderer {
             let rotated = page.rotation % 180 != 0
             let visibleSize = CGSize(width: rotated ? bounds.height : bounds.width,
                                      height: rotated ? bounds.width : bounds.height)
-            let thumbSize = CGSize(width: max(visibleSize.width, 1) * 2,
-                                   height: max(visibleSize.height, 1) * 2)
-            let image = page.thumbnail(of: thumbSize, for: .mediaBox)
-            image.draw(in: CGRect.aspectFit(image.size, in: pageRect))
+            let ratio = visibleSize.width / max(visibleSize.height, 1)
+
+            var targetRect = pageRect
+            if ratio > pageRect.width / max(pageRect.height, 1) {
+                targetRect.size.height = pageRect.width / ratio
+                targetRect.origin.y = (pageRect.height - targetRect.height) / 2
+            } else {
+                targetRect.size.width = pageRect.height * ratio
+                targetRect.origin.x = (pageRect.width - targetRect.width) / 2
+            }
+
+            if page.rotation % 360 == 0 {
+                // 未旋转页面走矢量绘制：导出 PDF 时文字与线条仍是矢量的，放大不糊
+                drawPDFPageVector(page, in: cg, rect: targetRect)
+            } else {
+                // 旋转页面的坐标变换较绕，回退到 3 倍位图，避免出错
+                let thumbSize = CGSize(width: max(targetRect.width, 1) * 3,
+                                       height: max(targetRect.height, 1) * 3)
+                page.thumbnail(of: thumbSize, for: .mediaBox).draw(in: targetRect)
+            }
         } else {
             drawPaper(in: cg, size: size, template: note.paperTemplate, tint: note.paperTint)
         }
     }
 
-    // MARK: - 墨迹
+    /// 把 PDF 页矢量绘制到目标矩形：PDF 坐标原点在左下、y 向上，需翻转到 UIKit 坐标系
+    static func drawPDFPageVector(_ page: PDFPage, in cg: CGContext, rect: CGRect) {
+        let bounds = page.bounds(for: .mediaBox)
+        guard bounds.width > 0, bounds.height > 0, rect.width > 0, rect.height > 0 else { return }
 
+        cg.saveGState()
+        cg.translateBy(x: rect.minX, y: rect.maxY)
+        cg.scaleBy(x: rect.width / bounds.width, y: -rect.height / bounds.height)
+        cg.translateBy(x: -bounds.minX, y: -bounds.minY)
+        page.draw(with: .mediaBox, to: cg)
+        cg.restoreGState()
+    }
+
+    // MARK: - 墨迹
     static func inkImage(drawing: PKDrawing, size: CGSize, scale: CGFloat) -> UIImage? {
         guard !drawing.strokes.isEmpty else { return nil }
         return drawing.image(from: CGRect(origin: .zero, size: size), scale: scale)

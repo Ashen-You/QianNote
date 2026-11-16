@@ -444,13 +444,13 @@ final class NoteStore: ObservableObject {
         return document
     }
 
-    func pdfPageImage(noteID: UUID, pageIndex: Int, size: CGSize) -> UIImage? {
-        let key = "\(noteID.uuidString)-\(pageIndex)-\(Int(size.width))x\(Int(size.height))" as NSString
+    func pdfPageImage(noteID: UUID, pageIndex: Int, size: CGSize, scale: CGFloat = 3) -> UIImage? {
+        let key = "\(noteID.uuidString)-\(pageIndex)-\(Int(size.width))x\(Int(size.height))@\(scale)" as NSString
         if let cached = pdfPageCache.object(forKey: key) { return cached }
         guard let document = pdfDocument(for: noteID),
               let page = document.page(at: pageIndex) else { return nil }
 
-        let target = CGSize(width: max(size.width, 1) * 2, height: max(size.height, 1) * 2)
+        let target = CGSize(width: max(size.width, 1) * scale, height: max(size.height, 1) * scale)
         let image = page.thumbnail(of: target, for: .mediaBox)
         pdfPageCache.setObject(image, forKey: key)
         return image

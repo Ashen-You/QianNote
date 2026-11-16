@@ -18,6 +18,11 @@ struct EditorView: View {
     @State private var sheet: EditorSheet?
     @State private var errorMessage: String?
 
+    /// 沉浸式全屏：隐藏顶栏 / 底栏 / 工具栏 / 缩略图，页面铺满整屏
+    @State private var immersive = false
+    /// 全屏时按宽度还是按高度适配
+    @State private var fitToWidth = false
+
     enum EditorSheet: Identifiable {
         case share(URL)
         case paper
@@ -50,11 +55,27 @@ struct EditorView: View {
         }
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
-        .overlay(alignment: .top) { topBar }
-        .overlay(alignment: .bottom) { bottomBar }
+        .overlay(alignment: .top) {
+            topBar
+                .opacity(immersive ? 0 : 1)
+                .allowsHitTesting(!immersive)
+        }
+        .overlay(alignment: .bottom) {
+            bottomBar
+                .opacity(immersive ? 0 : 1)
+                .allowsHitTesting(!immersive)
+        }
         .overlay(alignment: .top) {
             AudioPanelView(audio: audio, noteID: noteID, title: note?.title ?? "")
                 .padding(.top, 74)
+                .opacity(immersive ? 0 : 1)
+                .allowsHitTesting(!immersive)
+        }
+        .overlay {
+            if immersive, let note {
+                immersiveControls(note)
+                    .transition(.opacity)
+            }
         }
         .sheet(item: $sheet) { item in
             switch item {
@@ -92,20 +113,25 @@ struct EditorView: View {
 
     private func workspace(_ note: Note) -> some View {
         HStack(spacing: 0) {
-            ToolRailView(tools: tools)
-                .padding(.leading, 12)
-                .frame(maxHeight: .infinity, alignment: .center)
+            if !immersive {
+                ToolRailView(tools: tools)
+                    .padding(.leading, 12)
+                    .frame(maxHeight: .infinity, alignment: .center)
+                    .transition(.move(edge: .leading).combined(with: .opacity))
+            }
 
             pageArea(note)
 
-            if showPagePanel {
+            if showPagePanel && !immersive {
                 PageStripView(note: note, pageIndex: $pageIndex)
                     .frame(width: 118)
                     .padding(.trailing, 10)
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
             }
         }
-        .padding(.top, 70)
-        .padding(.bottom, 84)
+        .padding(.top, immersive ? 0 : 70)
+        .padding(.bottom, immersive ? 0 : 84)
+        .animation(.easeInOut(duration: 0.24), value: immersive)
         .overlay {
             AudioSyncView(audio: audio,
                           noteID: noteID,
@@ -126,7 +152,13 @@ struct EditorView: View {
         GeometryReader { geo in
             let pageWidth = CGFloat(max(note.pageWidth, 1))
             let pageHeight = CGFloat(max(note.pageHeight, 1))
-            let scale = max(0.1, min((geo.size.width - 24) / pageWidth, (geo.size.height - 24) / pageHeight))
+            let inset: CGFloat = immersive ? 0 : 24
+            let availableWidth = max(geo.size.width - inset, 1)
+            let availableHeight = max(geo.size.height - inset, 1)
+            let scaleToWidth = availableWidth / pageWidth
+            let scaleToHeight = availableHeight / pageHeight
+            // 全屏时可按宽度铺满（上下可滚动空间更大），否则取较小的那个保证整页可见
+            let scale = max(0.1, immersive && fitToWidth ? scaleToWidth : min(scaleToWidth, scaleToHeight))
 
             NotePageView(note: note,
                          pageIndex: pageIndex,
@@ -135,9 +167,119 @@ struct EditorView: View {
                 .frame(width: pageWidth, height: pageHeight)
                 .scaleEffect(scale, anchor: .center)
                 .frame(width: pageWidth * scale, height: pageHeight * scale)
-                .shadow(color: Color.black.opacity(0.18), radius: 22, x: 0, y: 10)
+                .shadow(color: Color.black.opacity(immersive ? 0 : 0.18),
+                        radius: immersive ? 0 : 22, x: 0, y: immersive ? 0 : 10)
                 .frame(width: geo.size.width, height: geo.size.height)
+                .clipped()
         }
+    }
+
+    // MARK: - 全屏控件
+
+    private func immersiveControls(_ note: Note) -> some View {
+        ZStack(alignment: .leading) {
+            immersiveToolCapsule
+                .padding(.leading, 10)
+
+            VStack(spacing: 0) {
+                HStack {
+                    Spacer()
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.24)) { immersive = false }
+                    } label: {
+                        Image(systemName: "arrow.down.right.and.arrow.up.left")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundStyle(Color.primary.opacity(0.75))
+                            .frame(width: 40, height: 40)
+                            .background(.ultraThinMaterial, in: Circle())
+                            .overlay(Circle().strokeBorder(Color.primary.opacity(0.08), lineWidth: 1))
+                            .shadow(color: Color.black.opacity(0.10), radius: 10, x: 0, y: 4)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("退出全屏")
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 12)
+
+                Spacer(minLength: 0)
+
+                HStack(spacing: 10) {
+                    Button {
+                        pageIndex = max(0, pageIndex - 1)
+                    } label: {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 12, weight: .bold))
+                            .frame(width: 28, height: 28)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(pageIndex == 0)
+                    .opacity(pageIndex == 0 ? 0.3 : 0.8)
+
+                    Text("\(pageIndex + 1) / \(note.pages.count)")
+                        .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                        .monospacedDigit()
+                        .frame(minWidth: 56)
+
+                    Button {
+                        pageIndex = min(note.pages.count - 1, pageIndex + 1)
+                    } label: {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 12, weight: .bold))
+                            .frame(width: 28, height: 28)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(pageIndex >= note.pages.count - 1)
+                    .opacity(pageIndex >= note.pages.count - 1 ? 0.3 : 0.8)
+
+                    Divider().frame(height: 18)
+
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.2)) { fitToWidth.toggle() }
+                    } label: {
+                        HStack(spacing: 5) {
+                            Image(systemName: fitToWidth ? "arrow.left.and.right" : "arrow.up.and.down")
+                                .font(.system(size: 11, weight: .bold))
+                            Text(fitToWidth ? "适应宽度" : "整页")
+                                .font(.footnote.weight(.medium))
+                        }
+                        .padding(.horizontal, 8)
+                        .frame(height: 28)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 9)
+                .background(.ultraThinMaterial, in: Capsule())
+                .overlay(Capsule().strokeBorder(Color.primary.opacity(0.07), lineWidth: 1))
+                .shadow(color: Color.black.opacity(0.10), radius: 12, x: 0, y: 5)
+                .padding(.bottom, 14)
+            }
+        }
+    }
+
+    /// 全屏时的窄工具条：不占版面，但能直接换笔
+    private var immersiveToolCapsule: some View {
+        VStack(spacing: 4) {
+            ForEach([ToolKind.pen, ToolKind.pencil, ToolKind.highlighter, ToolKind.eraser, ToolKind.lasso], id: \.self) { kind in
+                Button {
+                    tools.activeTool = kind
+                } label: {
+                    Image(systemName: kind.symbol)
+                        .font(.system(size: 15, weight: .semibold))
+                        .frame(width: 36, height: 36)
+                        .background(
+                            Circle().fill(tools.activeTool == kind ? Theme.accent.opacity(0.18) : Color.clear)
+                        )
+                        .foregroundStyle(tools.activeTool == kind ? Theme.accent : Color.primary.opacity(0.55))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(kind.title)
+            }
+        }
+        .padding(5)
+        .background(.ultraThinMaterial, in: Capsule())
+        .overlay(Capsule().strokeBorder(Color.primary.opacity(0.07), lineWidth: 1))
+        .shadow(color: Color.black.opacity(0.10), radius: 12, x: 0, y: 5)
     }
 
     // MARK: - 顶栏
@@ -209,6 +351,12 @@ struct EditorView: View {
                        isActive: showPagePanel,
                        label: "页面缩略图") {
                 withAnimation(.easeInOut(duration: 0.2)) { showPagePanel.toggle() }
+            }
+
+            IconButton(systemName: "arrow.up.left.and.arrow.down.right",
+                       isActive: false,
+                       label: "全屏阅读") {
+                withAnimation(.easeInOut(duration: 0.24)) { immersive = true }
             }
 
             Menu {
