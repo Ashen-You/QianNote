@@ -652,6 +652,13 @@ struct DrawingCanvas: UIViewRepresentable {
         }
 
         private func snapLastStroke(in canvasView: PKCanvasView) {
+            // 万一定时器正好在书写中途触发：千万不要回填 drawing，
+            // 否则 PencilKit 正在画的那一笔会被整段替换，表现为「抬笔瞬间左边一半没了」
+            guard !isUsingTool else {
+                scheduleShapeSnap(in: canvasView)
+                return
+            }
+
             let strokes = canvasView.drawing.strokes
             guard let last = strokes.last else { return }
 
@@ -703,12 +710,10 @@ enum ShapeSnapper {
         let diagonal = hypot(box.width, box.height)
         guard diagonal > 42 else { return nil }
 
-        // 路径长度太短说明不是有意的图形
-        guard pathLength(points) > diagonal * 1.1 else { return nil }
-
         let start = points.first!
         let end = points.last!
-        let isClosed = hypot(end.x - start.x, end.y - start.y) < diagonal * 0.22
+        let chord = hypot(end.x - start.x, end.y - start.y)
+        let isClosed = chord < diagonal * 0.22
 
         var corners = simplify(points, epsilon: diagonal * 0.032)
         if isClosed, corners.count >= 3,
@@ -717,8 +722,11 @@ enum ShapeSnapper {
             corners.removeLast()
         }
 
-        // 直线
+        // 直线：只认「基本笔直」的笔画。
+        // 写字时的撇、钩、弧线也是两头一尾，如果只看首尾就会把整笔压成一条直线，
+        // 看起来像「左边的部分消失了」。这里加一道弯曲度闸门：路径长度必须接近首尾距离。
         if !isClosed, corners.count <= 2 {
+            guard chord > 1, pathLength(points) / chord < 1.08 else { return nil }
             return [start, end]
         }
 
