@@ -168,9 +168,30 @@ final class TrackingCanvasView: PKCanvasView {
 
     private var didReportMultiTouch = false
 
+    /// 首帧尺寸还没量出来时暂存的墨迹。
+    /// PencilKit 拿到 drawing 就会按当前 bounds 建帧缓冲，0×0 的画布会让它在
+    /// `MTLTextureDescriptorInternal validateWithDevice:` 上断言崩溃
+    ///（崩溃栈在 com.apple.pencilkit.renderer），所以尺寸合法之前先不交给它。
+    private var pendingDrawing: PKDrawing?
+
     override func layoutSubviews() {
         super.layoutSubviews()
         pinViewport()
+        applyPendingDrawingIfPossible()
+    }
+
+    /// 尺寸合法时才写入墨迹；不合法就留到下一次 layout 再试
+    func setDrawingWhenReady(_ drawing: PKDrawing) {
+        pendingDrawing = drawing
+        applyPendingDrawingIfPossible()
+    }
+
+    private func applyPendingDrawingIfPossible() {
+        guard let pending = pendingDrawing,
+              bounds.width >= 1, bounds.height >= 1,
+              bounds.width.isFinite, bounds.height.isFinite else { return }
+        pendingDrawing = nil
+        self.drawing = pending
     }
 
     /// PKCanvasView 是 UIScrollView：墨迹画出原本边界后它会自己撑大 contentSize，
@@ -179,6 +200,9 @@ final class TrackingCanvasView: PKCanvasView {
     /// 关掉滚动时把视口钉死在 bounds 上，保证墨迹坐标和页面坐标永远一致。
     func pinViewport() {
         guard !isScrollEnabled else { return }
+        // bounds 还是 .zero 时不要动 contentSize：那等于告诉 PencilKit「画布是 0×0」
+        guard bounds.width >= 1, bounds.height >= 1,
+              bounds.width.isFinite, bounds.height.isFinite else { return }
         if contentSize != bounds.size { contentSize = bounds.size }
         if contentOffset != .zero { contentOffset = .zero }
     }
@@ -277,7 +301,8 @@ struct DrawingCanvas: UIViewRepresentable {
         // 拖动模式是纯导航：连 Pencil 的绘制手势都关掉，两种输入都只拖不写
         canvas.drawingGestureRecognizer.isEnabled = !fingerPans
         canvas.tool = tool
-        canvas.drawing = initialDrawing
+        // 首帧 bounds 还是 0，先寄存，等 layoutSubviews 量出尺寸再交给 PencilKit
+        canvas.setDrawingWhenReady(initialDrawing)
 
         let coordinator = context.coordinator
         // 关键：没有 delegate 就不会有 canvasViewDrawingDidChange，
@@ -293,7 +318,7 @@ struct DrawingCanvas: UIViewRepresentable {
         coordinator.bind(controller: controller, to: canvas)
 
         coordinator.installGestures(on: canvas)
-        coordinator.trackingCanvas = canvas as? TrackingCanvasView
+        coordinator.trackingCanvas = canvas
         coordinator.trackingCanvas?.onTouch = { [weak coordinator] point in
             guard let coordinator, let canvas = coordinator.trackingCanvas else { return }
             coordinator.parent.onPenMove?(coordinator.normalize(point, in: canvas))
@@ -630,7 +655,12 @@ struct DrawingCanvas: UIViewRepresentable {
                 return
             }
             isProgrammatic = true
-            canvas.drawing = drawing
+            // 同上：尺寸没量出来之前交给 PencilKit 会按 0×0 建帧缓冲
+            if let tracking = canvas as? TrackingCanvasView {
+                tracking.setDrawingWhenReady(drawing)
+            } else {
+                canvas.drawing = drawing
+            }
             (canvas as? TrackingCanvasView)?.pinViewport()
             (boundController ?? parent.controller).currentDrawing = drawing
             if notify {

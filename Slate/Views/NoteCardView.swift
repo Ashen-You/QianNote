@@ -5,6 +5,8 @@ struct NoteCardView: View {
     @EnvironmentObject private var store: NoteStore
 
     let note: Note
+    /// 缩略图高度：手机上卡片窄，高度跟着矮一点，一屏能多看两本
+    var previewHeight: CGFloat = 210
     @State private var thumbnail: UIImage?
 
     var body: some View {
@@ -40,7 +42,7 @@ struct NoteCardView: View {
                     .foregroundStyle(.tertiary)
             }
         }
-        .frame(height: 210)
+        .frame(height: previewHeight)
         .clipShape(RoundedRectangle(cornerRadius: Theme.cardCorner, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: Theme.cardCorner, style: .continuous)

@@ -89,6 +89,31 @@ struct Note: Identifiable, Codable, Hashable {
     var pageWidth: Double = 768
     var pageHeight: Double = 1024
 
+    /// 画布长边上限（点）。
+    ///
+    /// 页面尺寸不只是 SwiftUI 的 frame —— PencilKit 会按「页面点数 × 屏幕倍率」给整页分配
+    /// 帧缓冲（`PKMetalFramebuffer`）。PDF 的 mediaBox 单位是点，手机截图导出的 PDF 常见
+    /// 1320×2868，在 3 倍屏上就是 3960×8604 ≈ 3400 万像素、单张 136MB，
+    /// 模拟器的 Metal 直接判为非法纹理 → `validateWithDevice:` 断言 → SIGABRT
+    ///（崩溃栈落在 com.apple.pencilkit.renderer）。真机上则是几张大纹理同时驻留、内存暴涨。
+    /// 手写笔记一页 1400pt 已经很宽（A4 才 595pt），超过就没必要了。
+    static let maxPageSide: CGFloat = 1400
+
+    /// 把页面尺寸收进合法区间：非有限值回落到默认页，长边超过 `maxPageSide` 时等比缩小。
+    static func normalizedPageSize(_ size: CGSize) -> CGSize {
+        let width = size.width.isFinite ? size.width : 768
+        let height = size.height.isFinite ? size.height : 1024
+        let safeWidth = max(width, 100)
+        let safeHeight = max(height, 100)
+        let longest = max(safeWidth, safeHeight)
+        guard longest > maxPageSide else {
+            return CGSize(width: safeWidth.rounded(), height: safeHeight.rounded())
+        }
+        let ratio = maxPageSide / longest
+        return CGSize(width: max((safeWidth * ratio).rounded(), 100),
+                      height: max((safeHeight * ratio).rounded(), 100))
+    }
+
     // PDF 底稿
     var pdfFileName: String?
     var pdfPageCount: Int = 0
@@ -113,8 +138,9 @@ struct Note: Identifiable, Codable, Hashable {
         self.pages = pages
         self.paperTemplate = paperTemplate
         self.paperTint = paperTint
-        self.pageWidth = Double(pageSize.width)
-        self.pageHeight = Double(pageSize.height)
+        let size = Note.normalizedPageSize(pageSize)
+        self.pageWidth = Double(size.width)
+        self.pageHeight = Double(size.height)
     }
 
     /// 宽松解码：老版本索引里缺少的键（例如 inkStamps）用默认值补齐，
@@ -130,8 +156,13 @@ struct Note: Identifiable, Codable, Hashable {
         paperTemplate = try container.decodeIfPresent(PaperTemplate.self, forKey: .paperTemplate) ?? .ruled
         paperTint = try container.decodeIfPresent(PaperTint.self, forKey: .paperTint) ?? .white
         isFavorite = try container.decodeIfPresent(Bool.self, forKey: .isFavorite) ?? false
-        pageWidth = try container.decodeIfPresent(Double.self, forKey: .pageWidth) ?? 768
-        pageHeight = try container.decodeIfPresent(Double.self, forKey: .pageHeight) ?? 1024
+        // 老数据可能存着导入 PDF 时那份「mediaBox 点数」（比如 1320×2868），
+        // 读出来就收进合法区间，否则一打开那本笔记 PencilKit 又要分配超大帧缓冲
+        let stored = CGSize(width: try container.decodeIfPresent(Double.self, forKey: .pageWidth) ?? 768,
+                            height: try container.decodeIfPresent(Double.self, forKey: .pageHeight) ?? 1024)
+        let size = Note.normalizedPageSize(stored)
+        pageWidth = Double(size.width)
+        pageHeight = Double(size.height)
         pdfFileName = try container.decodeIfPresent(String.self, forKey: .pdfFileName)
         pdfPageCount = try container.decodeIfPresent(Int.self, forKey: .pdfPageCount) ?? 0
         audioFileName = try container.decodeIfPresent(String.self, forKey: .audioFileName)

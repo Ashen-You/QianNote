@@ -191,6 +191,27 @@
 - 顶栏现在只留：撤销 / 重做、录音、缩略图、全屏、⋯
 - 📝 欢迎页文案同步到当前交互（手形＝拖动模式、点按换笔、长按调色）
 
+### Step 11 ✅ 修「一画就崩」：PDF 页面尺寸不能直接用 mediaBox 点数
+
+- 🐞 崩溃栈完全落在 PencilKit 的 Metal 渲染线程：`com.apple.pencilkit.renderer` →
+  `setupOriginalBackFramebufferIfNecessary` → `PKMetalFramebuffer init` →
+  `-[MTLTextureDescriptorInternal validateWithDevice:]` → `MTLReportFailure` 断言 → `SIGABRT`。
+  一帧 App 代码都没进，所以不是笔迹逻辑写错，而是**画布尺寸**超出了 Metal 能接受的纹理
+- 🔍 根因：`importPDF` 拿 `page.bounds(for: .mediaBox)` 的**点**直接当页面尺寸。
+  手机截图做出来的 PDF mediaBox 是 1320×2868 点，而我们的截图页只有 440 宽 ——
+  等于开了一张 46×100 厘米的纸。PencilKit 按「页面点数 × 屏幕倍率」给整页分配帧缓冲，
+  3 倍屏就是 3960×8604 ≈ 3400 万像素、单张 136MB，模拟器的 `MTLSimDriver` 判为非法纹理
+- ✅ 新增 `Note.maxPageSide = 1400` 与 `Note.normalizedPageSize(_:)`：长边超限时**等比**缩小
+  （A4 才 595pt，一页 1400pt 已经很宽），在 `Note.init`、`Note` 宽松解码、`importPDF` 三处收口 ——
+  已经存进索引的老笔记读出来也会被夹回合法区间
+- ✅ 顺手补两个画布防线：`pinViewport()` 在 bounds 还是 `.zero` 时不再写 `contentSize`
+  （那等于告诉 PencilKit「画布是 0×0」）；首帧尺寸没量出来时，`drawing` 先寄存到 `pendingDrawing`，
+  等 `layoutSubviews` 拿到合法尺寸再交给 PencilKit
+- 🧪 验证方式：加临时 `-strokeTest` 钩子，进页面后直接塞一笔合成笔迹来走 `setDrawing → renderImageTexture`
+  这条渲染路径；1320×2868 与 644×1400 都试过、`contentScaleFactor` 强制 1/3/8 也试过，均不崩。
+  说明崩溃只在**真实落笔**（走 `wantMemorylessPaint` 的 memoryless 帧缓冲）时触发，
+  模拟器无法注入触摸，最终手感与稳定性仍需真机复核
+
 ### 暂不做
 
 - 手写识别 / 公式转换（需要 MyScript 或自建模型，属订阅级能力）

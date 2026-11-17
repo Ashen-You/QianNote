@@ -1,25 +1,74 @@
 import SwiftUI
 import UIKit
 
-// MARK: - 毛玻璃面板
+// MARK: - 液态玻璃浮层
 
-struct GlassPanel<Content: View>: View {
-    var cornerRadius: CGFloat
-    let content: Content
-
-    init(cornerRadius: CGFloat = 20, @ViewBuilder content: () -> Content) {
-        self.cornerRadius = cornerRadius
-        self.content = content()
+extension View {
+    /// 圆角浮层（工具栏 / 颜色面板 / 缩略图栏）
+    func slateGlassPanel(cornerRadius: CGFloat = 20,
+                         tint: Color? = nil,
+                         interactive: Bool = false) -> some View {
+        modifier(SlateGlassPanelModifier(cornerRadius: cornerRadius, tint: tint, interactive: interactive))
     }
 
-    var body: some View {
-        content
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .strokeBorder(Color.primary.opacity(0.07), lineWidth: 1)
-            )
-            .shadow(color: Color.black.opacity(0.12), radius: 18, x: 0, y: 8)
+    /// 胶囊浮层（顶栏 / 底栏 / 提示条）
+    func slateGlassCapsule(tint: Color? = nil, interactive: Bool = false) -> some View {
+        modifier(SlateGlassCapsuleModifier(tint: tint, interactive: interactive))
+    }
+}
+
+/// iOS 26 起用系统的 Liquid Glass（`glassEffect`）：真实折射、随内容变化的边缘高光、
+/// 按压时会有形变。iOS 17–18 上退回「毛玻璃 + 细描边 + 阴影」，观感尽量靠拢。
+private struct SlateGlassPanelModifier: ViewModifier {
+    var cornerRadius: CGFloat
+    var tint: Color?
+    var interactive: Bool
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        if #available(iOS 26.0, *) {
+            content.glassEffect(glass, in: shape)
+        } else {
+            content
+                .background(.regularMaterial, in: shape)
+                .overlay(shape.strokeBorder(Color.primary.opacity(0.07), lineWidth: 1))
+                .shadow(color: Color.black.opacity(0.12), radius: 16, x: 0, y: 6)
+        }
+    }
+
+    @available(iOS 26.0, *)
+    private var glass: Glass {
+        var glass = Glass.regular
+        if let tint { glass = glass.tint(tint) }
+        if interactive { glass = glass.interactive() }
+        return glass
+    }
+}
+
+private struct SlateGlassCapsuleModifier: ViewModifier {
+    var tint: Color?
+    var interactive: Bool
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        let shape = Capsule()
+        if #available(iOS 26.0, *) {
+            content.glassEffect(glass, in: shape)
+        } else {
+            content
+                .background(.regularMaterial, in: shape)
+                .overlay(shape.strokeBorder(Color.primary.opacity(0.07), lineWidth: 1))
+                .shadow(color: Color.black.opacity(0.12), radius: 14, x: 0, y: 6)
+        }
+    }
+
+    @available(iOS 26.0, *)
+    private var glass: Glass {
+        var glass = Glass.regular
+        if let tint { glass = glass.tint(tint) }
+        if interactive { glass = glass.interactive() }
+        return glass
     }
 }
 
@@ -158,12 +207,11 @@ struct ErrorBanner: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 11)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .slateGlassPanel(cornerRadius: 14)
         .overlay(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .strokeBorder(Color.orange.opacity(0.35), lineWidth: 1)
         )
-        .shadow(color: Color.black.opacity(0.14), radius: 14, x: 0, y: 6)
         .padding(.horizontal, 16)
     }
 }

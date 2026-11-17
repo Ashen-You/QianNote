@@ -27,12 +27,7 @@ struct ToolRailView: View {
             collapseButton
         }
         .padding(7)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .strokeBorder(Color.primary.opacity(0.07), lineWidth: 1)
-        )
-        .shadow(color: Color.black.opacity(0.12), radius: 16, x: 0, y: 6)
+        .slateGlassPanel(cornerRadius: 20, interactive: true)
     }
 
     private var separator: some View {
@@ -147,6 +142,144 @@ struct ToolRailView: View {
         )
         .accessibilityLabel(tool.title)
         .accessibilityHint("长按调整颜色与粗细")
+    }
+}
+
+// MARK: - 手机（紧凑宽度）的横向工具栏
+
+/// iPhone 上竖向工具栏会盖掉页面五分之一宽度，改成贴底的一条横向栏：
+/// 左边固定手形，中间 12 支笔横向滚动，右边是页码（点开页面网格）。
+struct CompactToolBar: View {
+    @ObservedObject var tools: ToolStore
+    @Binding var showPalette: Bool
+    let pageIndex: Int
+    let pageCount: Int
+    var onPageTap: () -> Void = {}
+
+    @State private var longPressedTool: ToolKind?
+
+    /// 手拖模式：整页进入纯导航，手指和 Pencil 都只拖页面
+    private var isHandActive: Bool { !tools.fingerDrawing }
+
+    var body: some View {
+        HStack(spacing: 6) {
+            handButton
+
+            divider
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 2) {
+                    ForEach(ToolKind.allCases) { tool in
+                        toolButton(tool)
+                    }
+                }
+                .padding(.horizontal, 2)
+            }
+            .frame(maxWidth: .infinity)
+
+            divider
+
+            pageButton
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .slateGlassCapsule(interactive: true)
+    }
+
+    private var divider: some View {
+        Rectangle()
+            .fill(Color.primary.opacity(0.10))
+            .frame(width: 1, height: 22)
+    }
+
+    private var handButton: some View {
+        Button {
+            if !isHandActive {
+                tools.fingerDrawing = false
+                withAnimation(.easeInOut(duration: 0.18)) { showPalette = false }
+            } else {
+                tools.fingerDrawing = true
+            }
+        } label: {
+            Image(systemName: isHandActive ? "hand.point.up.left.fill" : "hand.point.up.left")
+                .font(.system(size: 17, weight: .medium))
+                .foregroundStyle(isHandActive ? Theme.accent : Color.primary.opacity(0.72))
+                .frame(width: 34, height: 34)
+                .background(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(isHandActive ? Theme.accent.opacity(0.14) : Color.clear)
+                )
+                .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(isHandActive ? "拖动模式（点击回到书写）" : "进入拖动模式")
+    }
+
+    private func toolButton(_ tool: ToolKind) -> some View {
+        let isActive = tools.activeTool == tool && tools.fingerDrawing
+
+        return Button {
+            if longPressedTool == tool {
+                longPressedTool = nil
+                return
+            }
+            tools.activeTool = tool
+            tools.fingerDrawing = true
+            if showPalette {
+                withAnimation(.easeInOut(duration: 0.18)) { showPalette = false }
+            }
+        } label: {
+            ZStack {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(isActive ? Theme.accent.opacity(0.14) : Color.clear)
+
+                Image(systemName: tool.symbol)
+                    .font(.system(size: 17, weight: .medium))
+                    .foregroundStyle(isActive ? Theme.accent : Color.primary.opacity(0.72))
+                    .overlay(alignment: .bottomTrailing) {
+                        if tool.needsColor {
+                            Circle()
+                                .fill(tools.color(for: tool))
+                                .frame(width: 7, height: 7)
+                                .overlay(Circle().strokeBorder(Color.white.opacity(0.9), lineWidth: 1))
+                                .offset(x: 3, y: 3)
+                        }
+                    }
+            }
+            .frame(width: 34, height: 34)
+            .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .simultaneousGesture(
+            LongPressGesture(minimumDuration: 0.45).onEnded { _ in
+                longPressedTool = tool
+                tools.activeTool = tool
+                tools.fingerDrawing = true
+                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                withAnimation(.easeInOut(duration: 0.18)) { showPalette = true }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { longPressedTool = nil }
+            }
+        )
+        .accessibilityLabel(tool.title)
+        .accessibilityHint("长按调整颜色与粗细")
+    }
+
+    private var pageButton: some View {
+        Button(action: onPageTap) {
+            HStack(spacing: 4) {
+                Image(systemName: "rectangle.on.rectangle")
+                    .font(.system(size: 12, weight: .semibold))
+                Text("\(pageIndex + 1)/\(max(pageCount, 1))")
+                    .font(.caption.weight(.semibold))
+                    .monospacedDigit()
+            }
+            .foregroundStyle(Color.primary.opacity(0.72))
+            .padding(.horizontal, 9)
+            .frame(height: 30)
+            .background(Capsule().fill(Color.primary.opacity(0.06)))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("页面列表")
     }
 }
 
@@ -289,12 +422,7 @@ struct ToolPaletteView: View {
         }
         .padding(12)
         .frame(width: 200, alignment: .leading)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .strokeBorder(Color.primary.opacity(0.07), lineWidth: 1)
-        )
-        .shadow(color: Color.black.opacity(0.12), radius: 16, x: 0, y: 6)
+        .slateGlassPanel(cornerRadius: 18)
     }
 
     private func isSelected(_ preset: CGFloat) -> Bool {

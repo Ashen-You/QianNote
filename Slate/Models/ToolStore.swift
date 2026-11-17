@@ -219,11 +219,13 @@ final class ToolStore: ObservableObject {
         colors = loadedColors
         widths = loadedWidths
 
-        // 「手拖」成为默认模式。老用户之前存过「手指=书写」，一次性迁移过来，
-        // 否则升级后仍然是手指写字，会觉得没生效
+        // 「手拖」成为 iPad 的默认模式。老用户之前存过「手指=书写」，一次性迁移过来，
+        // 否则升级后仍然是手指写字，会觉得没生效。
+        // iPhone 上没有 Pencil，默认必须是「手指书写」，不然第一次进来一笔都写不出。
+        let phone = UIDevice.current.userInterfaceIdiom == .phone
         if !defaults.bool(forKey: "tool.defaultHandMigrated") {
             defaults.set(true, forKey: "tool.defaultHandMigrated")
-            defaults.set(false, forKey: "tool.fingerDrawing")
+            defaults.set(phone, forKey: "tool.fingerDrawing")
         }
         if defaults.object(forKey: "tool.fingerDrawing") != nil {
             fingerDrawing = defaults.bool(forKey: "tool.fingerDrawing")

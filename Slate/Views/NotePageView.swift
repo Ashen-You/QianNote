@@ -356,9 +356,7 @@ struct NotePageView: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
-        .background(.regularMaterial, in: Capsule())
-        .overlay(Capsule().strokeBorder(Color.primary.opacity(0.08), lineWidth: 1))
-        .shadow(color: Color.black.opacity(0.14), radius: 10, x: 0, y: 4)
+        .slateGlassCapsule()
     }
 
     private func selectionMoveGesture(_ selection: InkSelectionResult) -> some Gesture {

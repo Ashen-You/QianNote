@@ -143,7 +143,7 @@ final class NoteStore: ObservableObject {
     }
 
     private func seed() {
-        var welcome = Note(title: "欢迎使用 Slate", paperTemplate: .ruled, paperTint: .white)
+        var welcome = Note(title: "欢迎使用 Qian's Note", paperTemplate: .ruled, paperTint: .white)
         welcome.isFavorite = true
         welcome.pages = [NotePage(textBoxes: WelcomeContent.textBoxes)]
         notes = [welcome]
@@ -575,6 +575,14 @@ final class NoteStore: ObservableObject {
     ///
     /// 旧版是同步 `Data(contentsOf:)` + `UIImage(data:)`，而它是在 SwiftUI 的 `.task` / body 里被调用的。
     /// 一屏十几张卡片就是十几次主线程磁盘读 + 图片解码，进入编辑页、回到书架时都会有明显停顿。
+    /// 取缩略图（缓存 → 磁盘 → 后台补渲染）。
+    ///
+    /// **必须标 @MainActor**：磁盘读那段 continuation 是在 `thumbnailQueue` 上 resume 的，
+    /// 不隔离的话 `await` 之后的代码会继续跑在那条后台队列上，接着去改
+    /// `thumbnailWork` / `thumbnailInFlight` / `thumbnailVersions` 这些字典 ——
+    /// 和主线程同时写同一个字典，实测直接 SIGABRT（栈顶是 Dictionary._Variant.setValue）。
+    /// 一屏十几张卡片同时取图时，这个崩溃就变成了「一启动就卡死然后闪退」。
+    @MainActor
     func thumbnail(noteID: UUID, pageID: UUID?) async -> UIImage? {
         guard let pageID else { return nil }
 
@@ -653,8 +661,13 @@ final class NoteStore: ObservableObject {
 
         let bounds = firstPage.bounds(for: .mediaBox)
         let rotated = firstPage.rotation % 180 != 0
-        let pageSize = CGSize(width: max(rotated ? bounds.height : bounds.width, 100),
-                              height: max(rotated ? bounds.width : bounds.height, 100))
+        // mediaBox 的单位是点，但「PDF 的点」和「画布的点」不是一回事：
+        // 手机截图做出来的 PDF 常是 1320×2868，直接拿来当页面尺寸会让
+        // PencilKit 在 3 倍屏上分配 3960×8604 的帧缓冲，模拟器 Metal 会直接断言崩溃。
+        // 这里保持长宽比，把长边收进 Note.maxPageSide 以内。
+        let pageSize = Note.normalizedPageSize(
+            CGSize(width: rotated ? bounds.height : bounds.width,
+                   height: rotated ? bounds.width : bounds.height))
 
         let title = url.deletingPathExtension().lastPathComponent
         var note = Note(title: title,
@@ -689,7 +702,7 @@ final class NoteStore: ObservableObject {
         let safeTitle = note.title
             .replacingOccurrences(of: "/", with: "-")
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        let name = safeTitle.isEmpty ? "Slate" : safeTitle
+        let name = safeTitle.isEmpty ? "Qian's Note" : safeTitle
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("\(name)-\(Int(Date().timeIntervalSince1970)).pdf")
         do {
@@ -720,7 +733,7 @@ final class NoteStore: ObservableObject {
         let safeTitle = note.title
             .replacingOccurrences(of: "/", with: "-")
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        let name = (safeTitle.isEmpty ? "Slate" : safeTitle) + "-第\(pageIndex + 1)页"
+        let name = (safeTitle.isEmpty ? "Qian's Note" : safeTitle) + "-第\(pageIndex + 1)页"
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("\(name)-\(Int(Date().timeIntervalSince1970)).png")
         do {
@@ -874,7 +887,7 @@ final class NoteStore: ObservableObject {
 
 private enum WelcomeContent {
     static let textBoxes: [TextBox] = [
-        TextBox(text: "欢迎使用 Slate",
+        TextBox(text: "欢迎使用 Qian's Note",
                 x: 74, y: 120, width: 560, height: 60,
                 fontSize: 38, colorHex: "#1C1C1E"),
         TextBox(text: "一款为 iPad 与 Apple Pencil 打造的手写笔记应用。",

@@ -3,15 +3,121 @@
 <plist version="1.0">
 <dict>
 	<!-- Xcode 的 GENERATE_INFOPLIST_FILE 只认白名单内的 INFOPLIST_KEY_ 设置，
-	     UIFileSharingEnabled 不在其中，必须写进真实 Info.plist 才会生效。
+	     UIFileSharingEnabled / 文档类型 等都不在其中，必须写进真实 Info.plist 才会生效。
 	     该文件与自动生成的键合并，不需要重复写 CFBundle* 等键。 -->
 	<key>UIFileSharingEnabled</key>
 	<true/>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<true/>
-	<key>NSCameraUsageDescription</key>
-	<string>用相机拍摄纸面内容或板书，直接插入到笔记里。</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>从相册选择图片插入笔记。</string>
+
+	<!-- 声明能打开的文档：Files「打开方式」、其他 app 的分享面板里才会出现 Qian's Note。
+	     LSHandlerRank 用 Alternate：出现在候选里，但不抢系统默认的 PDF 阅读器。 -->
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>PDF 文档</string>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>com.adobe.pdf</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>图片</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>public.image</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Word 文档</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>com.microsoft.word.doc</string>
+				<string>org.openxmlformats.wordprocessingml.document</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>富文本</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>public.rtf</string>
+				<string>public.html</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>纯文本</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>public.plain-text</string>
+				<string>net.daringfireball.markdown</string>
+				<string>public.comma-separated-values-text</string>
+			</array>
+		</dict>
+	</array>
+
+	<!-- 备用 App 图标：两套都打进包里，运行时切换。名字对应 Assets.xcassets 里的 appiconset 名。 -->
+	<key>CFBundleIcons</key>
+	<dict>
+		<key>CFBundleAlternateIcons</key>
+		<dict>
+			<key>AppIconAI</key>
+			<dict>
+				<key>CFBundleIconFiles</key>
+				<array>
+					<string>AppIconAI</string>
+				</array>
+				<key>UIPrerenderedIcon</key>
+				<false/>
+			</dict>
+		</dict>
+	</dict>
+
+	<!-- 长按图标的主屏快捷操作 -->
+	<key>UIApplicationShortcutItems</key>
+	<array>
+		<dict>
+			<key>UIApplicationShortcutItemType</key>
+			<string>com.example.slate.newNote</string>
+			<key>UIApplicationShortcutItemTitle</key>
+			<string>新建笔记</string>
+			<key>UIApplicationShortcutItemIconType</key>
+			<string>UIApplicationShortcutIconTypeCompose</string>
+		</dict>
+		<dict>
+			<key>UIApplicationShortcutItemType</key>
+			<string>com.example.slate.importDocument</string>
+			<key>UIApplicationShortcutItemTitle</key>
+			<string>导入文档</string>
+			<key>UIApplicationShortcutItemIconType</key>
+			<string>UIApplicationShortcutIconTypeOpenIn</string>
+		</dict>
+	</array>
 </dict>
 </plist>

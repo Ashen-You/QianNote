@@ -34,7 +34,7 @@ struct AudioToolbarView: View {
             Task { @MainActor in
                 let granted = await audio.requestPermission()
                 guard granted else {
-                    onError("需要麦克风权限。请前往「设置 > Slate」打开麦克风开关。")
+                    onError("需要麦克风权限。请前往「设置 > Qian's Note」打开麦克风开关。")
                     return
                 }
                 store.prepareForRecording(noteID)
@@ -75,9 +75,12 @@ struct AudioToolbarView: View {
 struct AudioPanelView: View {
     @ObservedObject var audio: AudioController
     @EnvironmentObject private var store: NoteStore
+    @Environment(\.horizontalSizeClass) private var sizeClass
 
     let noteID: UUID
     let title: String
+
+    private var compact: Bool { sizeClass == .compact }
 
     var body: some View {
         Group {
@@ -94,7 +97,7 @@ struct AudioPanelView: View {
     }
 
     private var recordingBar: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: compact ? 8 : 14) {
             Circle()
                 .fill(Color.red)
                 .frame(width: 9, height: 9)
@@ -107,7 +110,9 @@ struct AudioPanelView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
-            Divider().frame(height: 20)
+            if !compact {
+                Divider().frame(height: 20)
+            }
 
             Button {
                 audio.pauseRecording()
@@ -128,19 +133,20 @@ struct AudioPanelView: View {
             }
             .buttonStyle(.plain)
 
-            Text("切换页面会自动生成书签")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
+            // 手机上放不下这句提示，只在大屏保留
+            if !compact {
+                Text("切换页面会自动生成书签")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
         }
-        .padding(.horizontal, 18)
+        .padding(.horizontal, compact ? 14 : 18)
         .padding(.vertical, 10)
-        .background(.regularMaterial, in: Capsule())
-        .overlay(Capsule().strokeBorder(Color.red.opacity(0.25), lineWidth: 1))
-        .shadow(color: Color.black.opacity(0.12), radius: 14, x: 0, y: 6)
+        .slateGlassCapsule(tint: Color.red.opacity(0.10))
     }
 
     private var playbackBar: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: compact ? 8 : 12) {
             Button {
                 audio.togglePlayback()
             } label: {
@@ -160,7 +166,8 @@ struct AudioPanelView: View {
             Slider(value: Binding(get: { audio.time },
                                   set: { audio.seek(to: $0) }),
                    in: 0...max(audio.duration, 0.1))
-                .frame(width: 180)
+                // 手机上不能写死 180，否则整条超出屏幕
+                .frame(minWidth: 70, maxWidth: compact ? .infinity : 180)
                 .tint(Theme.accent)
 
             Text(audio.duration.clockText)
@@ -179,9 +186,8 @@ struct AudioPanelView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
-        .background(.regularMaterial, in: Capsule())
-        .overlay(Capsule().strokeBorder(Color.primary.opacity(0.08), lineWidth: 1))
-        .shadow(color: Color.black.opacity(0.12), radius: 14, x: 0, y: 6)
+        .slateGlassCapsule()
+        .padding(.horizontal, compact ? 10 : 0)
     }
 }
 

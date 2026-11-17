@@ -4,6 +4,8 @@ import UniformTypeIdentifiers
 
 struct LibraryView: View {
     @EnvironmentObject private var store: NoteStore
+    @EnvironmentObject private var opener: DocumentOpenCoordinator
+    @Environment(\.horizontalSizeClass) private var sizeClass
 
     @State private var path = NavigationPath()
     @State private var searchText = ""
@@ -60,12 +62,13 @@ struct LibraryView: View {
                         if filteredNotes.isEmpty {
                             EmptyLibraryView(onCreate: createNote, onImport: { showImporter = true })
                         } else {
-                            LazyVGrid(columns: [GridItem(.adaptive(minimum: 190, maximum: 260), spacing: 22)],
+                            LazyVGrid(columns: columns,
                                       alignment: .leading,
-                                      spacing: 26) {
+                                      spacing: compact ? 18 : 26) {
                                 ForEach(filteredNotes) { note in
                                     NavigationLink(value: note.id) {
-                                        NoteCardView(note: note)
+                                        NoteCardView(note: note,
+                                                     previewHeight: compact ? 168 : 210)
                                     }
                                     .buttonStyle(.plain)
                                     .contextMenu { contextMenu(for: note) }
@@ -73,7 +76,7 @@ struct LibraryView: View {
                             }
                         }
                     }
-                    .padding(.horizontal, 24)
+                    .padding(.horizontal, compact ? 16 : 24)
                     .padding(.top, 8)
                     .padding(.bottom, 40)
                 }
@@ -100,15 +103,22 @@ struct LibraryView: View {
                 Button(prompt?.confirmTitle ?? "确定") { commitPrompt() }
             }
             .overlay(alignment: .bottom) {
-                if let message = store.errorMessage {
+                if let message = bannerMessage {
                     ErrorBanner(message: message) {
                         store.errorMessage = nil
+                        opener.errorMessage = nil
                     }
                     .padding(.bottom, 18)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
             }
-            .animation(.easeInOut(duration: 0.2), value: store.errorMessage)
+            .animation(.easeInOut(duration: 0.2), value: bannerMessage)
+            // 冷启动的快捷操作、外部文档导入完成，都在这里消费
+            .task { consumePending() }
+            .onChange(of: opener.noteToOpen) { _, _ in consumePending() }
+            .onReceive(NotificationCenter.default.publisher(for: .slateShortcutTriggered)) { _ in
+                consumePending()
+            }
         }
     }
 
@@ -226,6 +236,49 @@ struct LibraryView: View {
         case .title: result.sort { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
         }
         return result
+    }
+
+    // MARK: - 布局 / 外部入口
+
+    private var compact: Bool { sizeClass == .compact }
+
+    private var columns: [GridItem] {
+        compact
+            ? [GridItem(.adaptive(minimum: 148, maximum: 220), spacing: 14)]
+            : [GridItem(.adaptive(minimum: 190, maximum: 260), spacing: 22)]
+    }
+
+    private var bannerMessage: String? {
+        store.errorMessage ?? opener.errorMessage
+    }
+
+    /// 处理「外部打开文档」与「主屏快捷操作」两个入口。
+    /// 两者都会在 App 已经停在编辑页时触发，所以先把导航栈退回书架再跳转。
+    private func consumePending() {
+        if let shortcut = ShortcutInbox.take() {
+            switch shortcut {
+            case .newNote:
+                present { createNote() }
+            case .importDocument:
+                returnToLibrary()
+                showImporter = true
+            }
+        }
+
+        if let id = opener.noteToOpen {
+            opener.noteToOpen = nil
+            present { path.append(id) }
+        }
+    }
+
+    private func present(_ action: () -> Void) {
+        returnToLibrary()
+        action()
+    }
+
+    private func returnToLibrary() {
+        guard !path.isEmpty else { return }
+        path = NavigationPath()
     }
 
     // MARK: - 提示框

@@ -6,6 +6,8 @@ import UIKit
 struct EditorView: View {
     @EnvironmentObject private var store: NoteStore
     @Environment(\.dismiss) private var dismiss
+    /// iPhone（紧凑宽度）走另一套排版：顶栏精简、工具栏贴底、页面列表改成弹窗
+    @Environment(\.horizontalSizeClass) private var sizeClass
 
     let noteID: UUID
 
@@ -43,20 +45,24 @@ struct EditorView: View {
     enum EditorSheet: Identifiable {
         case share(URL)
         case paper
+        case pages
 
         var id: String {
             switch self {
             case .share(let url): return "share-\(url.absoluteString)"
             case .paper: return "paper"
+            case .pages: return "pages"
             }
         }
     }
 
     private var note: Note? { store.note(id: noteID) }
 
+    private var compact: Bool { sizeClass == .compact }
+
     var body: some View {
         ZStack {
-            Theme.editorBackground.ignoresSafeArea()
+            Theme.editorBackdrop.ignoresSafeArea()
 
             if let note {
                 workspace(note)
@@ -84,7 +90,7 @@ struct EditorView: View {
         }
         .overlay(alignment: .top) {
             AudioPanelView(audio: audio, noteID: noteID, title: note?.title ?? "")
-                .padding(.top, 74)
+                .padding(.top, compact ? 62 : 74)
                 .opacity(immersive ? 0 : 1)
                 .allowsHitTesting(!immersive)
         }
@@ -110,6 +116,10 @@ struct EditorView: View {
                 ShareSheet(items: [url])
             case .paper:
                 paperSheet
+            case .pages:
+                if let note {
+                    PageGridSheet(note: note, pageIndex: $pageIndex)
+                }
             }
         }
         .alert("重命名笔记", isPresented: $showRename) {
@@ -151,7 +161,8 @@ struct EditorView: View {
             // 面板打开时，页面压一层轻遮罩：视觉上退到下一层，且不吃触摸（Pencil 照常书写）
             .overlay { paletteScrim }
 
-            if showPagePanel && !immersive {
+            // 手机宽度放不下右侧那一竖条，改成底部工具栏里的「页面」按钮弹窗
+            if showPagePanel && !immersive && !compact {
                 PageStripView(note: note, pageIndex: $pageIndex)
                     .frame(width: 118)
                     .padding(.trailing, 10)
@@ -161,9 +172,9 @@ struct EditorView: View {
         // 工具栏和工具面板都浮在页面之上，不再挤占画布宽度（以前工具栏是 HStack 成员，一展开就少 70pt）
         .overlay(alignment: .leading) { railFloating }
         // 注意要挂在 padding 之前：挂在后面时 overlay 的范围是整块屏幕，面板顶部会被顶栏压住
-        .overlay(alignment: .leading) { paletteFloating }
-        .padding(.top, immersive ? 0 : 70)
-        .padding(.bottom, immersive ? 0 : 84)
+        .overlay(alignment: compact ? .bottom : .leading) { paletteFloating }
+        .padding(.top, immersive ? 0 : (compact ? 58 : 70))
+        .padding(.bottom, immersive ? 0 : (compact ? 74 : 84))
         .animation(.easeInOut(duration: 0.24), value: immersive)
         .overlay {
             AudioSyncView(audio: audio,
@@ -200,16 +211,19 @@ struct EditorView: View {
     /// 进出全屏时工具的排列和可用项都对不上，看起来像两套东西。
     @ViewBuilder
     private var railFloating: some View {
-        if showRail {
-            railCard
-                .padding(.leading, immersive ? 8 : railInset)
-                .transition(.move(edge: .leading).combined(with: .opacity))
-                .zIndex(3)
-        } else {
-            railRevealTab
-                .padding(.leading, 4)
-                .transition(.opacity)
-                .zIndex(3)
+        // 手机上工具栏在底部（CompactToolBar），左边这条不出现
+        if !compact {
+            if showRail {
+                railCard
+                    .padding(.leading, immersive ? 8 : railInset)
+                    .transition(.move(edge: .leading).combined(with: .opacity))
+                    .zIndex(3)
+            } else {
+                railRevealTab
+                    .padding(.leading, 4)
+                    .transition(.opacity)
+                    .zIndex(3)
+            }
         }
     }
 
@@ -243,9 +257,7 @@ struct EditorView: View {
                 .font(.system(size: 11, weight: .bold))
                 .foregroundStyle(Color.primary.opacity(0.5))
                 .frame(width: 20, height: 54)
-                .background(.regularMaterial, in: Capsule())
-                .overlay(Capsule().strokeBorder(Color.primary.opacity(0.07), lineWidth: 1))
-                .shadow(color: Color.black.opacity(0.10), radius: 8, x: 0, y: 2)
+                .slateGlassCapsule()
         }
         .buttonStyle(.plain)
         .accessibilityLabel("显示工具栏")
@@ -268,7 +280,27 @@ struct EditorView: View {
     /// 放不下（小屏 / 横屏）才退化成可滚动的面板，不再像以前那样被容器直接切掉。
     @ViewBuilder
     private var paletteFloating: some View {
-        if showPalette && showRail {
+        if compact {
+            // 手机上从底部工具栏上方弹出，横向铺开更好点
+            if showPalette {
+                GeometryReader { geo in
+                    ViewThatFits(in: .vertical) {
+                        paletteCard
+                        ScrollView(.vertical, showsIndicators: false) {
+                            paletteCard
+                        }
+                        .scrollBounceBehavior(.basedOnSize)
+                    }
+                    .frame(width: 224, alignment: .leading)
+                    .frame(maxHeight: geo.size.height, alignment: .bottom)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+                }
+                .padding(.leading, 10)
+                .padding(.bottom, 8)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+                .zIndex(2)
+            }
+        } else if showPalette && showRail {
             GeometryReader { geo in
                 ViewThatFits(in: .vertical) {
                     paletteCard
@@ -291,7 +323,8 @@ struct EditorView: View {
     /// 只负责视觉，不吃触摸，免得打开面板就没法写字。
     @ViewBuilder
     private var paletteScrim: some View {
-        if showPalette && showRail {
+        // 手机上是从底部弹出的，不需要左侧那道渐变
+        if !compact && showPalette && showRail {
             LinearGradient(colors: [Color.black.opacity(0.14),
                                     Color.black.opacity(0.04),
                                     .clear],
@@ -306,7 +339,7 @@ struct EditorView: View {
         GeometryReader { geo in
             let pageWidth = CGFloat(max(note.pageWidth, 1))
             let pageHeight = CGFloat(max(note.pageHeight, 1))
-            let inset: CGFloat = immersive ? 0 : 24
+            let inset: CGFloat = immersive ? 0 : (compact ? 8 : 24)
             let availableWidth = max(geo.size.width - inset, 1)
             let availableHeight = max(geo.size.height - inset, 1)
             let scaleToWidth = availableWidth / pageWidth
@@ -409,9 +442,7 @@ struct EditorView: View {
                 .padding(.leading, 10)
                 .padding(.trailing, 4)
                 .frame(height: 32)
-                .background(.regularMaterial, in: Capsule())
-                .overlay(Capsule().strokeBorder(Color.primary.opacity(0.07), lineWidth: 1))
-                .shadow(color: Color.black.opacity(0.12), radius: 10, x: 0, y: 4)
+                .slateGlassCapsule()
                 .transition(.opacity.combined(with: .scale(scale: 0.92)))
             }
         }
@@ -552,9 +583,7 @@ struct EditorView: View {
                             .font(.system(size: 14, weight: .bold))
                             .foregroundStyle(Color.primary.opacity(0.75))
                             .frame(width: 40, height: 40)
-                            .background(.ultraThinMaterial, in: Circle())
-                            .overlay(Circle().strokeBorder(Color.primary.opacity(0.08), lineWidth: 1))
-                            .shadow(color: Color.black.opacity(0.10), radius: 10, x: 0, y: 4)
+                            .slateGlassCapsule(interactive: true)
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("退出全屏")
@@ -610,9 +639,7 @@ struct EditorView: View {
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 9)
-                .background(.ultraThinMaterial, in: Capsule())
-                .overlay(Capsule().strokeBorder(Color.primary.opacity(0.07), lineWidth: 1))
-                .shadow(color: Color.black.opacity(0.10), radius: 12, x: 0, y: 5)
+                .slateGlassCapsule()
                 .padding(.bottom, 14)
             }
         }
@@ -621,22 +648,32 @@ struct EditorView: View {
     // MARK: - 顶栏
 
     private var topBar: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: compact ? 6 : 10) {
             Button {
                 dismiss()
             } label: {
-                HStack(spacing: 3) {
+                // 手机上不写「笔记」两个字，省下来的宽度留给标题
+                if compact {
                     Image(systemName: "chevron.left")
-                        .font(.system(size: 13, weight: .bold))
-                    Text("笔记")
-                        .font(.subheadline.weight(.medium))
+                        .font(.system(size: 15, weight: .bold))
+                        .frame(width: 32, height: 32)
+                        .background(Circle().fill(Color.primary.opacity(0.05)))
+                        .foregroundStyle(Theme.accent)
+                } else {
+                    HStack(spacing: 3) {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 13, weight: .bold))
+                        Text("笔记")
+                            .font(.subheadline.weight(.medium))
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(Capsule().fill(Color.primary.opacity(0.05)))
+                    .foregroundStyle(Theme.accent)
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(Capsule().fill(Color.primary.opacity(0.05)))
-                .foregroundStyle(Theme.accent)
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("返回笔记列表")
 
             Button {
                 renameText = note?.title ?? ""
@@ -644,29 +681,32 @@ struct EditorView: View {
             } label: {
                 HStack(spacing: 5) {
                     Text(note?.title ?? "")
-                        .font(.headline)
+                        .font(compact ? .subheadline.weight(.semibold) : .headline)
                         .lineLimit(1)
+                        .truncationMode(.tail)
                     Image(systemName: "pencil")
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(.secondary)
                 }
                 .padding(.vertical, 6)
-                .padding(.horizontal, 8)
+                .padding(.horizontal, compact ? 4 : 8)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
 
-            Spacer(minLength: 8)
+            Spacer(minLength: compact ? 2 : 8)
 
             HStack(spacing: 2) {
                 IconButton(systemName: "arrow.uturn.backward",
                            isActive: false,
+                           size: compact ? 32 : 36,
                            label: "撤销") { undoCurrentPage() }
                     .opacity(controllers.canUndo ? 1 : 0.35)
                     .disabled(!controllers.canUndo)
 
                 IconButton(systemName: "arrow.uturn.forward",
                            isActive: false,
+                           size: compact ? 32 : 36,
                            label: "重做") { redoCurrentPage() }
                     .opacity(controllers.canRedo ? 1 : 0.35)
                     .disabled(!controllers.canRedo)
@@ -683,16 +723,18 @@ struct EditorView: View {
                 .padding(.vertical, 2)
                 .background(Capsule().fill(Color.primary.opacity(0.05)))
 
-            IconButton(systemName: "sidebar.right",
-                       isActive: showPagePanel,
-                       label: "页面缩略图") {
-                withAnimation(.easeInOut(duration: 0.2)) { showPagePanel.toggle() }
-            }
+            if !compact {
+                IconButton(systemName: "sidebar.right",
+                           isActive: showPagePanel,
+                           label: "页面缩略图") {
+                    withAnimation(.easeInOut(duration: 0.2)) { showPagePanel.toggle() }
+                }
 
-            IconButton(systemName: "arrow.up.left.and.arrow.down.right",
-                       isActive: false,
-                       label: "全屏阅读") {
-                withAnimation(.easeInOut(duration: 0.24)) { immersive = true }
+                IconButton(systemName: "arrow.up.left.and.arrow.down.right",
+                           isActive: false,
+                           label: "全屏阅读") {
+                    withAnimation(.easeInOut(duration: 0.24)) { immersive = true }
+                }
             }
 
             Menu {
@@ -729,6 +771,18 @@ struct EditorView: View {
                 } label: {
                     Label("清空当前页", systemImage: "eraser.line.dashed")
                 }
+                if compact {
+                    Button {
+                        sheet = .pages
+                    } label: {
+                        Label("页面列表", systemImage: "rectangle.on.rectangle")
+                    }
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.24)) { immersive = true }
+                    } label: {
+                        Label("全屏阅读", systemImage: "arrow.up.left.and.arrow.down.right")
+                    }
+                }
                 Divider()
                 Toggle(isOn: Binding(get: { !tools.fingerDrawing },
                                      set: { tools.fingerDrawing = !$0 })) {
@@ -750,33 +804,38 @@ struct EditorView: View {
             } label: {
                 Image(systemName: "ellipsis")
                     .font(.system(size: 15, weight: .bold))
-                    .frame(width: 36, height: 36)
+                    .frame(width: compact ? 32 : 36, height: compact ? 32 : 36)
                     .background(Circle().fill(Color.primary.opacity(0.05)))
                     .foregroundStyle(Color.primary.opacity(0.75))
             }
             .buttonStyle(.plain)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .strokeBorder(Color.primary.opacity(0.06), lineWidth: 1)
-        )
-        .shadow(color: Color.black.opacity(0.10), radius: 16, x: 0, y: 6)
-        .padding(.horizontal, 14)
-        .padding(.top, 8)
+        .padding(.horizontal, compact ? 10 : 14)
+        .padding(.vertical, compact ? 6 : 8)
+        .slateGlassPanel(cornerRadius: 18, interactive: true)
+        .padding(.horizontal, compact ? 8 : 14)
+        .padding(.top, compact ? 6 : 8)
     }
 
     // MARK: - 底栏
 
     private var bottomBar: some View {
-        HStack(spacing: 12) {
-            if let note {
+        Group {
+            // 手机上底栏就是工具栏：手形 / 一排笔 / 页码
+            if compact, let note {
+                CompactToolBar(tools: tools,
+                               showPalette: $showPalette,
+                               pageIndex: pageIndex,
+                               pageCount: note.pages.count) {
+                    sheet = .pages
+                }
+                .padding(.horizontal, 8)
+                .padding(.bottom, 6)
+            } else if let note {
                 pageIndicator(note)
+                    .padding(.bottom, 10)
             }
         }
-        .padding(.bottom, 10)
     }
 
     private func pageIndicator(_ note: Note) -> some View {
@@ -810,9 +869,7 @@ struct EditorView: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
-        .background(.regularMaterial, in: Capsule())
-        .overlay(Capsule().strokeBorder(Color.primary.opacity(0.07), lineWidth: 1))
-        .shadow(color: Color.black.opacity(0.10), radius: 14, x: 0, y: 6)
+        .slateGlassCapsule()
     }
 
     // MARK: - 纸张选择
@@ -1054,9 +1111,7 @@ struct EditorView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
-        .background(.regularMaterial, in: Capsule())
-        .overlay(Capsule().strokeBorder(Color.primary.opacity(0.07), lineWidth: 1))
-        .shadow(color: Color.black.opacity(0.10), radius: 12, x: 0, y: 4)
+        .slateGlassCapsule()
         .allowsHitTesting(false)
     }
 }

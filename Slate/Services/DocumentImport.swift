@@ -56,7 +56,7 @@ final class DocumentImporter: NSObject {
 
         let pageSize = CGSize(width: 612, height: 792)
         let format = UIGraphicsPDFRendererFormat()
-        format.documentInfo = [kCGPDFContextCreator as String: "Slate"]
+        format.documentInfo = [kCGPDFContextCreator as String: "Qian's Note"]
         let renderer = UIGraphicsPDFRenderer(bounds: CGRect(origin: .zero, size: pageSize), format: format)
 
         let output = FileManager.default.temporaryDirectory
