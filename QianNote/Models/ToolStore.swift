@@ -174,8 +174,16 @@ final class ToolStore: ObservableObject {
     }
 
     /// 手指是否直接书写。默认关闭 = 手拖模式：手指拖页面 / 翻页，Pencil 照常写字
+    /// （iPad 上手指永远只拖动；iPhone 没有 Pencil，才允许手指书写）
     @Published var fingerDrawing: Bool = false {
         didSet { defaults.set(fingerDrawing, forKey: "tool.fingerDrawing") }
+    }
+
+    /// 手形 / 拖动模式：点工具栏右侧的「手指」按钮进入。
+    /// 进入后 Apple Pencil 也不再写字、只拖动画面（手指本来就一直是拖动）。
+    /// 再点任意一支笔即回到书写。与 Notability 的「手形」工具同义。
+    @Published var handMode: Bool = false {
+        didSet { defaults.set(handMode, forKey: "tool.handMode") }
     }
 
     /// 橡皮模式：整笔擦（vector）/ 像素擦（bitmap）
@@ -257,6 +265,10 @@ final class ToolStore: ObservableObject {
            let tool = ToolKind(rawValue: raw) {
             activeTool = tool
         }
+
+        if defaults.object(forKey: "tool.handMode") != nil {
+            handMode = defaults.bool(forKey: "tool.handMode")
+        }
     }
 
     // MARK: 查询
@@ -271,6 +283,12 @@ final class ToolStore: ObservableObject {
 
     var activeColor: Color { color(for: activeTool) }
     var activeWidth: CGFloat { width(for: activeTool) }
+
+    /// 手指能否书写：iPad 上永远不能（手指只用来拖动页面），
+    /// iPhone 没有 Pencil 时才允许手指书写。
+    var fingerCanDraw: Bool {
+        UIDevice.current.userInterfaceIdiom == .phone && fingerDrawing
+    }
 
     // MARK: 修改
 
@@ -340,6 +358,6 @@ final class ToolStore: ObservableObject {
 
     /// 用于判断是否需要把工具同步给 PKCanvasView（避免每次刷新都重设工具）
     var toolKey: String {
-        "\(activeTool.rawValue)|\(activeColor.hexString)|\(activeWidth)|\(fingerDrawing)|\(eraserMode.rawValue)"
+        "\(activeTool.rawValue)|\(activeColor.hexString)|\(activeWidth)|\(fingerCanDraw)|\(handMode)|\(eraserMode.rawValue)"
     }
 }

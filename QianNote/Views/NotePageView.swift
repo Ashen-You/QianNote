@@ -62,9 +62,19 @@ struct NotePageView: View {
 
     private var pageSize: CGSize { note.pageSize }
 
-    /// 拖动模式（纯导航）：手指和 Pencil 都只拖页面，任何工具都写不进去
+    /// 拖动模式（纯导航）：手形按钮激活后，手指和 Pencil 都只拖页面，任何工具都写不进去
     private var isNavigating: Bool {
-        !tools.fingerDrawing && onFingerPan != nil
+        tools.handMode && onFingerPan != nil
+    }
+
+    /// 手指是否单指拖动：iPad 上手指永远拖动（不写字）；iPhone 手指书写时才关闭
+    private var fingerCanPan: Bool {
+        !tools.fingerCanDraw && onFingerPan != nil
+    }
+
+    /// 笔是否单指拖动：手形模式下 Pencil 只拖不写
+    private var pencilCanPan: Bool {
+        tools.handMode && onFingerPan != nil
     }
 
     private var canvasInteractive: Bool {
@@ -96,7 +106,7 @@ struct NotePageView: View {
                           initialDrawing: store.drawing(noteID: note.id, pageID: pageID),
                           tool: tools.pkTool,
                           toolKey: tools.toolKey,
-                          fingerDrawing: tools.fingerDrawing,
+                          fingerDrawing: tools.fingerCanDraw,
                           isEnabled: canvasInteractive,
                           controller: controller,
                           onChange: { drawing in
@@ -114,7 +124,8 @@ struct NotePageView: View {
                           onStrokeCommitted: onStrokeCommitted,
                           onUndoTap: onUndoTap,
                           onRedoTap: onRedoTap,
-                          fingerPans: isNavigating,
+                          fingerPans: fingerCanPan,
+                          pencilPans: pencilCanPan,
                           onFingerPan: onFingerPan,
                           onFingerPanEnd: onFingerPanEnd)
                 .frame(width: pageSize.width, height: pageSize.height)

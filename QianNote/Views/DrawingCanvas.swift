@@ -389,11 +389,12 @@ struct DrawingCanvas: UIViewRepresentable {
     var onUndoTap: (() -> Void)? = nil
     /// 三指点击 → 重做
     var onRedoTap: (() -> Void)? = nil
-    /// 拖动模式（关闭「手指书写」后启用）：进入后是**纯导航**，
-    /// 手指和 Apple Pencil 都只拖动页面，谁都不写字。
-    /// 之前只把 drawingPolicy 设成 .pencilOnly，结果 Pencil 照样落笔，
-    /// 用户以为进了拖动模式就写不了字，实际是「手指写不了、笔还在写」，两种输入行为不一致。
+    /// 手指单指拖动页面：iPad 上手指永远是拖动（翻页 / 平移），恒为 true；
+    /// iPhone 无 Pencil 时关闭，让手指用来书写。
     var fingerPans: Bool = false
+    /// 笔单指拖动页面：手形 / 拖动模式（handMode）下为 true，此时 Pencil 只拖不写；
+    /// 平时选了笔则为 false，Pencil 正常写字。
+    var pencilPans: Bool = false
     var onFingerPan: ((CGSize) -> Void)? = nil
     var onFingerPanEnd: (() -> Void)? = nil
 
@@ -409,8 +410,8 @@ struct DrawingCanvas: UIViewRepresentable {
         canvas.alwaysBounceVertical = false
         canvas.alwaysBounceHorizontal = false
         canvas.drawingPolicy = fingerDrawing ? .anyInput : .pencilOnly
-        // 拖动模式是纯导航：连 Pencil 的绘制手势都关掉，两种输入都只拖不写
-        canvas.drawingGestureRecognizer.isEnabled = !fingerPans
+        // 拖动模式下 Pencil 也不写字（笔只拖），平时选了笔则正常写字
+        canvas.drawingGestureRecognizer.isEnabled = !pencilPans
         canvas.tool = tool
         // 首帧 bounds 还是 0，先寄存，等 layoutSubviews 量出尺寸再交给 PencilKit
         canvas.setDrawingWhenReady(initialDrawing)
@@ -474,11 +475,9 @@ struct DrawingCanvas: UIViewRepresentable {
             canvas.drawingPolicy = policy
         }
 
-        // 拖动模式：把 PencilKit 的绘制手势整个停掉（Pencil 也不再落笔），
-        // 只留下我们自己的平移手势。删掉这行的话，手拖模式里 Pencil 照样写字，
-        // 手指拖、笔写，两种输入的行为就对不上了。
-        if canvas.drawingGestureRecognizer.isEnabled == fingerPans {
-            canvas.drawingGestureRecognizer.isEnabled = !fingerPans
+        // 笔是否写字：手形模式（pencilPans）下把 PencilKit 绘制手势停掉，Pencil 只拖不写
+        if canvas.drawingGestureRecognizer.isEnabled == pencilPans {
+            canvas.drawingGestureRecognizer.isEnabled = !pencilPans
         }
 
         if coordinator.isEnabled != isEnabled {
@@ -489,6 +488,7 @@ struct DrawingCanvas: UIViewRepresentable {
         // 手写模式（单指书写）下双击会被误判，只保留双指手势
         coordinator.doubleTap?.isEnabled = !fingerDrawing
         coordinator.fingerPan?.isEnabled = fingerPans
+        coordinator.pencilPan?.isEnabled = pencilPans
     }
 
     static func dismantleUIView(_ canvas: PKCanvasView, coordinator: Coordinator) {
@@ -525,6 +525,7 @@ struct DrawingCanvas: UIViewRepresentable {
         private var pendingSnap: DispatchWorkItem?
         var doubleTap: UITapGestureRecognizer?
         var fingerPan: UIPanGestureRecognizer?
+        var pencilPan: UIPanGestureRecognizer?
         weak var trackingCanvas: TrackingCanvasView?
 
         /// 多点手势开始时的撤销栈深度与笔画数，用于清掉手指误落在画布上的笔迹
@@ -586,18 +587,28 @@ struct DrawingCanvas: UIViewRepresentable {
             canvas.addGestureRecognizer(tap)
             self.doubleTap = tap
 
-            // 单指拖动页面：只在「手指=拖动」时启用，避免抢走指写。
-            // 触摸类型带上 pencil —— 拖动模式里 Pencil 也是拖动，不然笔放上去既写不了也不动，整块画布像死了一样
+            // 手指单指拖动页面：iPad 上手指永远是拖动（翻页 / 平移），只在「手指=拖动」时启用。
             let fingerPan = UIPanGestureRecognizer(target: self, action: #selector(handleFingerPan(_:)))
             fingerPan.minimumNumberOfTouches = 1
             fingerPan.maximumNumberOfTouches = 1
-            fingerPan.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue),
-                                           NSNumber(value: UITouch.TouchType.pencil.rawValue)]
+            fingerPan.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
             fingerPan.delegate = self
             fingerPan.cancelsTouchesInView = true
             fingerPan.isEnabled = parent.fingerPans
             canvas.addGestureRecognizer(fingerPan)
             self.fingerPan = fingerPan
+
+            // 笔单指拖动页面：手形 / 拖动模式（pencilPans）下 Pencil 也只拖不写，
+            // 否则笔放上去既写不了也不动，整块画布像死了一样。
+            let pencilPan = UIPanGestureRecognizer(target: self, action: #selector(handleFingerPan(_:)))
+            pencilPan.minimumNumberOfTouches = 1
+            pencilPan.maximumNumberOfTouches = 1
+            pencilPan.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.pencil.rawValue)]
+            pencilPan.delegate = self
+            pencilPan.cancelsTouchesInView = true
+            pencilPan.isEnabled = parent.pencilPans
+            canvas.addGestureRecognizer(pencilPan)
+            self.pencilPan = pencilPan
 
             // 两指点击 = 撤销，三指点击 = 重做（照 Notability 的手势，不拿笔也能用）
             let undoTap = UITapGestureRecognizer(target: self, action: #selector(handleUndoTap(_:)))
@@ -749,10 +760,13 @@ struct DrawingCanvas: UIViewRepresentable {
             true
         }
 
-        /// 单指拖动只在「手指=拖动」时生效，其余手势照旧
+        /// 单指拖动只在对应开关打开时生效，其余手势照旧
         func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
             if gestureRecognizer === fingerPan {
                 return parent.fingerPans && parent.onFingerPan != nil
+            }
+            if gestureRecognizer === pencilPan {
+                return parent.pencilPans && parent.onFingerPan != nil
             }
             return true
         }

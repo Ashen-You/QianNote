@@ -908,9 +908,8 @@ struct EditorView: View {
                         Label("连续滚动", systemImage: "rectangle.stack")
                     }
                 }
-                Toggle(isOn: Binding(get: { !tools.fingerDrawing },
-                                     set: { tools.fingerDrawing = !$0 })) {
-                    Label("拖动模式（不写字）", systemImage: "hand.point.up.left")
+                Toggle(isOn: $tools.handMode) {
+                    Label("拖动模式（笔也不写字）", systemImage: "hand.point.up.left")
                 }
                 if note?.hasRecording == true {
                     Button(role: .destructive) {
@@ -1066,10 +1065,10 @@ struct EditorView: View {
                         }
                     }
 
-                    Toggle(isOn: $tools.fingerDrawing) {
+                    Toggle(isOn: $tools.handMode) {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("手指书写").font(.subheadline)
-                            Text("关闭后进入拖动模式：手指和 Apple Pencil 都只拖动页面（放大时平移，1× 时上下拖动翻页），不写字；点任意笔立刻回到书写")
+                            Text("拖动模式").font(.subheadline)
+                            Text("开启后手指和 Apple Pencil 都只拖动页面（放大时平移，1× 时上下拖动翻页），不写字；手指平时就一直是拖动，点任意笔立刻回到书写")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -1079,13 +1078,13 @@ struct EditorView: View {
                     VStack(alignment: .leading, spacing: 9) {
                         Text("手势")
                             .font(.subheadline.weight(.semibold))
-                        Text("不拿笔也能操作，指写模式下同样有效")
+                        Text("不拿笔也能操作")
                             .font(.caption)
                             .foregroundStyle(.secondary)
 
                         gestureRow("两指点击", "撤销")
                         gestureRow("三指点击", "重做")
-                        gestureRow("单指拖动（拖动模式）", "平移 / 翻页，Pencil 同样适用")
+                        gestureRow("单指拖动", "平移 / 翻页（手指始终如此，拖动模式下 Pencil 同样适用）")
                         gestureRow("双指捏合 / 拖动", "缩放 / 平移")
                         gestureRow("双击（指写模式除外）", "整页 ↔ 2.2×")
                     }
