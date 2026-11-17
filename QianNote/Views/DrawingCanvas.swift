@@ -31,13 +31,15 @@ final class CanvasController: NSObject, ObservableObject {
         updateFlags()
     }
 
-    /// 清空当前页：把画布墨迹真正抹掉，并清掉撤销/重做栈与系统 undo 动作。
-    /// 与「撤销」不同——这是删光整页，不留可撤销的记录。
+    /// 清空当前页：把画布墨迹真正抹掉，但把「清空前的内容」记为一步可撤销的操作，
+    /// 用户误点清空后仍可三指 / ⌘Z / 工具栏撤销恢复。
     /// 通过 onDrawingRestored 回调走 Coordinator 的 applyProgrammatic，
     /// 由它把空 drawing 应用到 PKCanvasView 并落盘。
     func clearCanvas() {
-        resetHistory()
-        currentDrawing = PKDrawing()
+        let previous = currentDrawing
+        // 已经是空页就没有可清的内容，也不该多出一条无意义的撤销步
+        guard !isSame(previous, PKDrawing()) else { return }
+        record(previous: previous, current: PKDrawing())
         onDrawingRestored?(PKDrawing())
     }
 
