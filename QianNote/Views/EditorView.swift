@@ -48,6 +48,10 @@ struct EditorView: View {
     @State private var continuous = true
     /// 程序跳页（点缩略图/底栏）时置位，避免滚动到位的 onAppear 再反过来触发 scrollTo 形成回环
     @State private var isProgrammaticScroll = false
+    /// 连续滚动模式下 ScrollView 的实时滚动位置（最接近视口顶部锚点的页）。
+    /// 用它来同步 pageIndex，替代之前靠 onAppear 同步——后者在页面刚滚入视口边缘就触发，
+    /// 导致滚动到两页中间时被 scrollTo(.center) 强行拽走（瞬移）。
+    @State private var continuousPage: Int? = nil
 
     enum EditorSheet: Identifiable {
         case share(URL)
@@ -466,10 +470,9 @@ struct EditorView: View {
                                 .padding(.horizontal, inset)
                                 .id(index)
                                 .onAppear {
-                                    // 滚动到某页时同步页码（底栏页码 / 缩略图高亮 / 录音时间轴跟随）
-                                    if pageIndex != index {
-                                        pageIndex = index
-                                    }
+                                    // 只负责把该页的撤销栈激活，页码同步交给 scrollPosition。
+                                    // 之前这里写 pageIndex = index，在 LazyVStack 惰性加载时
+                                    // 页面刚进入视口边缘就触发，配合下面的 scrollTo 造成瞬移。
                                     controllers.activate(page.id)
                                 }
                         }
@@ -479,9 +482,29 @@ struct EditorView: View {
                     .padding(.top, immersive ? geo.safeAreaInsets.top : 16)
                     .padding(.bottom, immersive ? max(geo.safeAreaInsets.bottom, 16) : 16)
                 }
-                .onChange(of: pageIndex) { _, newValue in
-                    // 点右侧缩略图 / 底栏翻页按钮时，滚动到对应页
+                .scrollPosition(id: $continuousPage)
+                .onAppear {
+                    // 首次进入定位：从缩略图/历史恢复到非第一页时，scrollPosition 初始为 nil，
+                    // 需要主动滚一次。等布局稳定后跳过去（无动画，避免进入时看到一段滚动）。
+                    guard continuousPage == nil, pageIndex > 0 else { return }
+                    DispatchQueue.main.async {
+                        proxy.scrollTo(pageIndex, anchor: .top)
+                    }
+                }
+                .onChange(of: continuousPage) { _, newValue in
+                    // 用户手指滚动到位后，把「最接近视口顶部的页」同步成当前页码。
+                    // 程序 scrollTo 动画期间（isProgrammaticScroll）不响应，避免反向覆盖。
                     guard !isProgrammaticScroll else { return }
+                    if let newValue, newValue != pageIndex {
+                        pageIndex = newValue
+                    }
+                }
+                .onChange(of: pageIndex) { _, newValue in
+                    // 点右侧缩略图 / 底栏翻页按钮时，滚动到对应页。
+                    // 若目标页已是当前滚动位置（滚动同步刚把 pageIndex 改成它），则跳过，
+                    // 否则会形成「滚动→同步→scrollTo」的回环瞬移。
+                    guard !isProgrammaticScroll else { return }
+                    if continuousPage == newValue { return }
                     isProgrammaticScroll = true
                     withAnimation(.easeInOut(duration: 0.25)) {
                         proxy.scrollTo(newValue, anchor: .center)
