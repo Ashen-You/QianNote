@@ -28,6 +28,9 @@ struct NotePageView: View {
     /// 手指单指是否用手势拖动页面。连续滚动模式下手指交给 ScrollView 原生滚动，
     /// 这里应传 false；单页模式（放大平移 / 翻页）保持 true。
     var fingerPans: Bool = true
+    /// 是否自己渲染墨迹画布。连续滚动模式下整本笔记共用一块画布，
+    /// 这里只负责背景（纸张 / PDF / 图片 / 文字框），墨迹由外层统一绘制。
+    var showsInk: Bool = true
 
     @State private var selectedTextID: UUID?
     /// 正在就地编辑的文字框（不再弹窗，退格 / 全选 / 输入法都走系统原生行为）
@@ -104,41 +107,43 @@ struct NotePageView: View {
                     }
                 }
 
-            DrawingCanvas(pageID: pageID,
-                          initialDrawing: store.drawing(noteID: note.id, pageID: pageID),
-                          tool: tools.pkTool,
-                          toolKey: tools.toolKey,
-                          fingerDrawing: tools.fingerCanDraw,
-                          isEnabled: canvasInteractive,
-                          controller: controller,
-                          onChange: { drawing in
-                              store.saveDrawing(drawing, noteID: note.id, pageID: pageID)
-                          },
-                          onPinch: onPinch,
-                          onPan: onPan,
-                          onDoubleTap: onDoubleTap,
-                          onPencilDoubleTap: onPencilDoubleTap,
-                          shapeRecognition: shapeRecognition,
-                          isShapeEligible: tools.activeTool.supportsShapeSnap && !tools.activeTool.isDashed,
-                          onPenMove: onPenMove,
-                          isDashed: tools.activeTool.isDashed,
-                          dashWidth: tools.width(for: .dashed),
-                          onUndoTap: onUndoTap,
-                          onRedoTap: onRedoTap,
-                          fingerPans: fingerCanPan,
-                          pencilPans: pencilCanPan,
-                          onFingerPan: onFingerPan,
-                          onFingerPanEnd: onFingerPanEnd)
-                .frame(width: pageSize.width, height: pageSize.height)
+            if showsInk {
+                DrawingCanvas(pageID: pageID,
+                              initialDrawing: store.drawing(noteID: note.id, pageID: pageID),
+                              tool: tools.pkTool,
+                              toolKey: tools.toolKey,
+                              fingerDrawing: tools.fingerCanDraw,
+                              isEnabled: canvasInteractive,
+                              controller: controller,
+                              onChange: { drawing in
+                                  store.saveDrawing(drawing, noteID: note.id, pageID: pageID)
+                              },
+                              onPinch: onPinch,
+                              onPan: onPan,
+                              onDoubleTap: onDoubleTap,
+                              onPencilDoubleTap: onPencilDoubleTap,
+                              shapeRecognition: shapeRecognition,
+                              isShapeEligible: tools.activeTool.supportsShapeSnap && !tools.activeTool.isDashed,
+                              onPenMove: onPenMove,
+                              isDashed: tools.activeTool.isDashed,
+                              dashWidth: tools.width(for: .dashed),
+                              onUndoTap: onUndoTap,
+                              onRedoTap: onRedoTap,
+                              fingerPans: fingerCanPan,
+                              pencilPans: pencilCanPan,
+                              onFingerPan: onFingerPan,
+                              onFingerPanEnd: onFingerPanEnd)
+                    .frame(width: pageSize.width, height: pageSize.height)
+            }
 
             // 拖动模式下套索 / 激光 / 文字都退场，页面只负责被拖
-            if tools.activeTool == .lasso, !isNavigating {
+            if showsInk, tools.activeTool == .lasso, !isNavigating {
                 lassoLayer
             }
 
             imageHandleLayer
 
-            if tools.activeTool == .laser, !isNavigating {
+            if showsInk, tools.activeTool == .laser, !isNavigating {
                 LaserOverlay(color: tools.color(for: .laser),
                              width: tools.width(for: .laser))
                     .frame(width: pageSize.width, height: pageSize.height)

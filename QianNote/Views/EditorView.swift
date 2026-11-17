@@ -47,14 +47,9 @@ struct EditorView: View {
     @State private var continuous = true
     /// 程序跳页（点缩略图/底栏）时置位，避免滚动到位的 onAppear 再反过来触发 scrollTo 形成回环
     @State private var isProgrammaticScroll = false
-    /// 连续滚动模式下 ScrollView 的实时滚动位置（最接近视口顶部锚点的页）。
-    /// 用它来同步 pageIndex，替代之前靠 onAppear 同步——后者在页面刚滚入视口边缘就触发，
-    /// 导致滚动到两页中间时被 scrollTo(.center) 强行拽走（瞬移）。
-    @State private var continuousPage: Int? = nil
-    /// 连续滚动 + 手形模式下，Pencil 单指拖动的累积位移（用于翻页）
-    @State private var flowSwipeAccum: CGFloat = 0
-    /// 连续滚动视口宽度（由 onGeometryChange 监听，稳定非 0；避免 GeometryReader 初始 0 导致 fit 算错）
-    @State private var flowViewportWidth: CGFloat = 0
+    /// 连续滚动模式下整本笔记的墨迹（全局坐标，第 i 页原点在 y = i * pageHeight）。
+    /// 这块画布是唯一的书写层，所以笔可以跨页连续画。
+    @State private var sharedInk = PKDrawing()
 
     enum EditorSheet: Identifiable {
         case share(URL)
@@ -431,174 +426,79 @@ struct EditorView: View {
     /// 横向 / 纵向滚动范围都由内容尺寸天然决定，放大后画布跟着变大，不会出现
     /// 「画布没放大、内容被固定视口裁剪」的问题。每页只是列表里的一个 item，无遮罩。
     private func continuousArea(_ note: Note) -> some View {
-        GeometryReader { geo in
-            let inset: CGFloat = immersive ? 0 : (compact ? 8 : 24)
-            // 用稳定的视口宽度（onGeometryChange 监听，避免 GeometryReader 初始 0 阶段算错）。
-            // 首次为 0 时退回 geo.size.width，保证至少不崩。
-            let vw = flowViewportWidth > 1 ? flowViewportWidth : geo.size.width
-            let fitWidth = max(vw - inset * 2, 1)
-            let pageWidth = CGFloat(max(note.pageWidth, 1))
-            let pageHeight = CGFloat(max(note.pageHeight, 1))
-            let fit = fitWidth / max(pageWidth, 1)
-            // 每页真实布局尺寸：宽高都随 zoom 线性放大（面积自然 × zoom²）
-            let renderedWidth = pageWidth * fit * zoom
-            let renderedHeight = pageHeight * fit * zoom
+        ContinuousInkCanvas(
+            pageSize: note.pageSize,
+            pageCount: note.pages.count,
+            globalDrawing: sharedInk,
+            tool: tools.pkTool,
+            toolKey: tools.toolKey,
+            isDrawingEnabled: !tools.handMode,
+            fingerDrawing: tools.fingerCanDraw,
+            shapeRecognition: tools.shapeRecognition,
+            isSourceEligibleForSnap: tools.activeTool.supportsShapeSnap && !tools.activeTool.isDashed,
+            zoom: $zoom,
+            currentPage: $pageIndex,
+            onDrawingChange: { applySharedInk($0, note: note) },
+            background: pageStack(note)
+        )
+        .onAppear { loadSharedInk(note) }
+        .onChange(of: note.pages.count) { _, _ in loadSharedInk(note) }
+        .onDisappear { flushSharedInk(note) }
+    }
 
-            ScrollViewReader { proxy in
-                ScrollView([.horizontal, .vertical], showsIndicators: false) {
-                    LazyVStack(spacing: immersive ? 8 : 18) {
-                        ForEach(Array(note.pages.enumerated()), id: \.element.id) { index, page in
-                            flowPage(note, page: page, index: index,
-                                     fit: fit, zoom: zoom,
-                                     renderedWidth: renderedWidth,
-                                     renderedHeight: renderedHeight,
-                                     proxy: proxy, geo: geo)
-                                .id(index)
-                                .onAppear {
-                                    // 只负责把该页的撤销栈激活，页码同步交给 scrollPosition。
-                                    controllers.activate(page.id)
-                                }
-                        }
-                    }
-                    // 让列表至少占满视口宽度，zoom=1 时每页水平居中；放大后横向滚动由内容尺寸撑开。
-                    .frame(minWidth: vw)
-                    // 沉浸全屏下 workspace 顶部 padding 归零，页面会滚到状态栏下面；
-                    .padding(.top, immersive ? geo.safeAreaInsets.top : 16)
-                    .padding(.bottom, immersive ? max(geo.safeAreaInsets.bottom, 16) : 16)
-                }
-                .scrollPosition(id: $continuousPage)
-                .onGeometryChange(for: CGFloat.self) { proxy in
-                    proxy.size.width
-                } action: { newWidth in
-                    if newWidth > 1 { flowViewportWidth = newWidth }
-                }
-                .onAppear {
-                    // 首次进入定位：从缩略图/历史恢复到非第一页时，scrollPosition 初始为 nil，
-                    // 需要主动滚一次。等布局稳定后跳过去（无动画，避免进入时看到一段滚动）。
-                    guard continuousPage == nil, pageIndex > 0 else { return }
-                    DispatchQueue.main.async {
-                        proxy.scrollTo(pageIndex, anchor: .top)
-                    }
-                }
-                .onChange(of: continuousPage) { _, newValue in
-                    // 用户手指滚动到位后，把「最接近视口顶部的页」同步成当前页码。
-                    guard !isProgrammaticScroll else { return }
-                    if let newValue, newValue != pageIndex {
-                        pageIndex = newValue
-                    }
-                }
-                .onChange(of: pageIndex) { _, newValue in
-                    // 点右侧缩略图 / 底栏翻页按钮时，滚动到对应页。
-                    guard !isProgrammaticScroll else { return }
-                    if continuousPage == newValue { return }
-                    isProgrammaticScroll = true
-                    withAnimation(.easeInOut(duration: 0.25)) {
-                        proxy.scrollTo(newValue, anchor: .center)
-                    }
-                    // 滚动动画结束后放开，让后续滚动重新驱动页码同步
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                        isProgrammaticScroll = false
-                    }
-                }
+    /// 连续滚动模式的背景层：所有页无缝隙拼成一整条，只负责纸张 / PDF / 图片 / 文字框。
+    /// 墨迹统一由上层的共享画布绘制，所以笔可以从页底一直画到下一页，中间没有断点。
+    ///
+    /// 注意这里**不做 scaleEffect**：缩放由 UIScrollView 统一承担，
+    /// 背景和墨迹在同一个 contentView 里一起被放大，天然对齐。
+    private func pageStack(_ note: Note) -> some View {
+        let size = note.pageSize
+        return VStack(spacing: 0) {
+            ForEach(Array(note.pages.enumerated()), id: \.element.id) { index, page in
+                NotePageView(note: note,
+                             pageIndex: index,
+                             tools: tools,
+                             controller: controllers.controller(for: page.id),
+                             showsInk: false)
+                    .frame(width: size.width, height: size.height)
             }
         }
+        .frame(width: size.width, alignment: .top)
     }
 
-    /// 连续滚动模式下的一页：一个普通列表 item。
-    /// 页面（PDF 底稿 + 墨迹）在 NotePageView 内部完整渲染，这里用「真实布局尺寸」缩放：
-    /// scaleEffect(fit*zoom) 把原尺寸页面放大，frame 用放大后的宽高，滚动范围天然匹配。
-    /// 无任何覆盖层 / 额外背景 / 阴影——页与页直接拼接。
-    @ViewBuilder
-    private func flowPage(_ note: Note, page: NotePage, index: Int,
-                          fit: CGFloat, zoom: CGFloat,
-                          renderedWidth: CGFloat, renderedHeight: CGFloat,
-                          proxy: ScrollViewProxy, geo: GeometryProxy) -> some View {
-        let pageWidth = CGFloat(max(note.pageWidth, 1))
-        let pageHeight = CGFloat(max(note.pageHeight, 1))
-        NotePageView(note: note,
-                     pageIndex: index,
-                     tools: tools,
-                     controller: controllers.controller(for: page.id),
-                     pdfScale: pdfRenderScale(for: note.pageSize),
-                     onPinch: { delta, focal in
-                         applyFlowPinch(delta, focal: focal, viewport: geo.size)
-                     },
-                     onPan: { delta in
-                         applyFlowPan(delta, contentWidth: renderedWidth, viewport: geo.size)
-                     },
-                     onDoubleTap: { focal in
-                         toggleFlowZoom(focal: focal, viewport: geo.size)
-                     },
-                     onPencilDoubleTap: {
-                         tools.togglePencilEraser()
-                     },
-                     shapeRecognition: tools.shapeRecognition,
-                     onPenMove: { _ in },
-                     onUndoTap: { gestureUndo(page.id) },
-                     onRedoTap: { gestureRedo(page.id) },
-                     onFingerPan: { delta in
-                         flowPanToScroll(delta, proxy: proxy, pageCount: note.pages.count)
-                     },
-                     onFingerPanEnd: { flowSwipeAccum = 0 },
-                     fingerPans: false)
-            // 对照单页 pageArea 验证过的缩放链：固定原始尺寸 → scaleEffect(center) → 缩放后 frame。
-            // 页与页直接拼接，无遮罩。
-            .frame(width: pageWidth, height: pageHeight)
-            .scaleEffect(fit * zoom, anchor: .center)
-            .frame(width: renderedWidth, height: renderedHeight)
-            .clipped()
+    // MARK: - 共享画布的墨迹读写
+
+    /// 把整本笔记的墨迹合成一条全局 drawing（第 i 页原点在 y = i * pageHeight）
+    private func loadSharedInk(_ note: Note) {
+        let drawings = note.pages.map { store.drawing(noteID: note.id, pageID: $0.id) }
+        sharedInk = InkComposer.merge(pageDrawings: drawings, pageHeight: note.pageSize.height)
     }
 
-    // MARK: 连续滚动整体缩放（zoom 作用在整个页面流，而非单页）
-    //
-    // 结构：单一双向 ScrollView([.horizontal, .vertical])，LazyVStack 每页 flowPage 用
-    //       scaleEffect(fit*zoom) + frame(×zoom) 做真实布局缩放。
-    // zoom 线性作用在每页宽高上（面积自然 × zoom²），横向 / 纵向滚动范围都由内容尺寸天然决定，
-    // 放大后画布跟着变大、横向可滚动，不会出现「画布没放大、内容被固定视口裁剪」。
-    // 每页只是列表里的一个普通 item，无覆盖层。
-
-    /// 双指捏合：围绕捏合中心缩放整个页面流。
-    /// 缩放用真实布局尺寸（renderedWidth/Height 随 zoom 变），横向滚动范围由 ScrollView 自动更新。
-    private func applyFlowPinch(_ delta: CGFloat, focal: CGPoint, viewport: CGSize) {
-        let old = zoom
-        let new = min(max(old * delta, 1), 6)
-        guard abs(new - old) > 0.0005 else { return }
-        zoom = new
+    private func applySharedInk(_ global: PKDrawing, note: Note) {
+        sharedInk = global
+        writeBackSharedInk(global, note: note)
     }
 
-    /// 双指拖动：放大后横向平移页面流。
-    /// 横向滚动交给双向 ScrollView 原生处理，这里不再手算 pan。
-    private func applyFlowPan(_ delta: CGSize, contentWidth: CGFloat, viewport: CGSize) {
-        // 横向平移由双向 ScrollView 原生接管，无需处理。
-    }
-
-    private func toggleFlowZoom(focal: CGPoint, viewport: CGSize) {
-        if zoom > 1.05 {
-            withAnimation(.easeOut(duration: 0.24)) { resetZoom() }
-            return
-        }
-        let target: CGFloat = 2.2
-        withAnimation(.easeOut(duration: 0.24)) {
-            zoom = target
+    /// 按页边界切开，只把真正变了的页写回存储
+    private func writeBackSharedInk(_ global: PKDrawing, note: Note) {
+        let split = InkComposer.split(global: global,
+                                      pageHeight: note.pageSize.height,
+                                      pageCount: note.pages.count)
+        for (index, page) in note.pages.enumerated() {
+            guard let drawing = split[index] else { continue }
+            let current = store.drawing(noteID: note.id, pageID: page.id)
+            // 笔画数和包围盒都一致时才算一模一样，避免每抬一次笔就把整本重写一遍
+            if current.strokes.count == drawing.strokes.count,
+               current.bounds == drawing.bounds,
+               current.dataRepresentation() == drawing.dataRepresentation() {
+                continue
+            }
+            store.saveDrawing(drawing, noteID: note.id, pageID: page.id)
         }
     }
 
-    /// 手形模式下 Pencil 单指拖动整个页面流：累积位移翻页。
-    /// iOS 17 的 ScrollViewProxy 没有增量滚动 API，只能按 id 跳页，这里累积位移触发翻页。
-    private func flowPanToScroll(_ delta: CGSize, proxy: ScrollViewProxy, pageCount: Int) {
-        flowSwipeAccum += delta.height
-        guard abs(flowSwipeAccum) > 96 else { return }
-        let dir = flowSwipeAccum < 0 ? 1 : -1
-        flowSwipeAccum = 0
-        let target = pageIndex + dir
-        guard target >= 0, target < pageCount else { return }
-        isProgrammaticScroll = true
-        withAnimation(.easeInOut(duration: 0.2)) {
-            proxy.scrollTo(target, anchor: .center)
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.28) {
-            isProgrammaticScroll = false
-        }
+    private func flushSharedInk(_ note: Note) {
+        writeBackSharedInk(sharedInk, note: note)
     }
 
     // MARK: - 缩放平移
