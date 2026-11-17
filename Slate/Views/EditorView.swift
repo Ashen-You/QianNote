@@ -222,20 +222,21 @@ struct EditorView: View {
     private let railWidth: CGFloat = 58
     private let railInset: CGFloat = 12
 
+    /// 整页（全屏）模式下也用同一套工具栏和面板。
+    /// 之前全屏有一份单独的窄胶囊（只有七支笔、没有手、没有颜色面板），
+    /// 进出全屏时工具的排列和可用项都对不上，看起来像两套东西。
     @ViewBuilder
     private var railFloating: some View {
-        if !immersive {
-            if showRail {
-                railCard
-                    .padding(.leading, railInset)
-                    .transition(.move(edge: .leading).combined(with: .opacity))
-                    .zIndex(3)
-            } else {
-                railRevealTab
-                    .padding(.leading, 4)
-                    .transition(.opacity)
-                    .zIndex(3)
-            }
+        if showRail {
+            railCard
+                .padding(.leading, immersive ? 8 : railInset)
+                .transition(.move(edge: .leading).combined(with: .opacity))
+                .zIndex(3)
+        } else {
+            railRevealTab
+                .padding(.leading, 4)
+                .transition(.opacity)
+                .zIndex(3)
         }
     }
 
@@ -294,7 +295,7 @@ struct EditorView: View {
     /// 放不下（小屏 / 横屏）才退化成可滚动的面板，不再像以前那样被容器直接切掉。
     @ViewBuilder
     private var paletteFloating: some View {
-        if showPalette && showRail && !immersive {
+        if showPalette && showRail {
             GeometryReader { geo in
                 ViewThatFits(in: .vertical) {
                     paletteCard
@@ -307,7 +308,7 @@ struct EditorView: View {
                 // 与竖向居中的工具栏并排时垂直居中对齐，看起来像从工具栏上「长」出来的一页
                 .frame(maxHeight: geo.size.height, alignment: .center)
             }
-            .padding(.leading, railInset + railWidth + 4)
+            .padding(.leading, (immersive ? 8 : railInset) + railWidth + 4)
             .transition(.move(edge: .leading).combined(with: .opacity))
             .zIndex(2)
         }
@@ -317,7 +318,7 @@ struct EditorView: View {
     /// 只负责视觉，不吃触摸，免得打开面板就没法写字。
     @ViewBuilder
     private var paletteScrim: some View {
-        if showPalette && showRail && !immersive {
+        if showPalette && showRail {
             LinearGradient(colors: [Color.black.opacity(0.14),
                                     Color.black.opacity(0.04),
                                     .clear],
@@ -613,9 +614,6 @@ struct EditorView: View {
 
     private func immersiveControls(_ note: Note) -> some View {
         ZStack(alignment: .leading) {
-            immersiveToolCapsule
-                .padding(.leading, 10)
-
             VStack(spacing: 0) {
                 HStack {
                     Spacer()
@@ -690,32 +688,6 @@ struct EditorView: View {
                 .padding(.bottom, 14)
             }
         }
-    }
-
-    /// 全屏时的窄工具条：不占版面，但能直接换笔
-    private var immersiveToolCapsule: some View {
-        VStack(spacing: 4) {
-            ForEach([ToolKind.pen, ToolKind.dashed, ToolKind.pencil, ToolKind.highlighter,
-                     ToolKind.laser, ToolKind.eraser, ToolKind.lasso], id: \.self) { kind in
-                Button {
-                    tools.activeTool = kind
-                } label: {
-                    Image(systemName: kind.symbol)
-                        .font(.system(size: 15, weight: .semibold))
-                        .frame(width: 36, height: 36)
-                        .background(
-                            Circle().fill(tools.activeTool == kind ? Theme.accent.opacity(0.18) : Color.clear)
-                        )
-                        .foregroundStyle(tools.activeTool == kind ? Theme.accent : Color.primary.opacity(0.55))
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(kind.title)
-            }
-        }
-        .padding(5)
-        .background(.ultraThinMaterial, in: Capsule())
-        .overlay(Capsule().strokeBorder(Color.primary.opacity(0.07), lineWidth: 1))
-        .shadow(color: Color.black.opacity(0.10), radius: 12, x: 0, y: 5)
     }
 
     // MARK: - 顶栏
@@ -859,7 +831,7 @@ struct EditorView: View {
                 Divider()
                 Toggle(isOn: Binding(get: { !tools.fingerDrawing },
                                      set: { tools.fingerDrawing = !$0 })) {
-                    Label("手指拖动页面", systemImage: "hand.point.up.left")
+                    Label("拖动模式（不写字）", systemImage: "hand.point.up.left")
                 }
                 if note?.hasRecording == true {
                     Button(role: .destructive) {
@@ -1015,7 +987,7 @@ struct EditorView: View {
                     Toggle(isOn: $tools.fingerDrawing) {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("手指书写").font(.subheadline)
-                            Text("关闭后书写只用 Apple Pencil，单指拖动页面：放大时平移，1× 时上下拖动翻页")
+                            Text("关闭后进入拖动模式：手指和 Apple Pencil 都只拖动页面（放大时平移，1× 时上下拖动翻页），不写字；点任意笔立刻回到书写")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -1031,7 +1003,7 @@ struct EditorView: View {
 
                         gestureRow("两指点击", "撤销")
                         gestureRow("三指点击", "重做")
-                        gestureRow("单指拖动（手指=拖动）", "平移 / 翻页")
+                        gestureRow("单指拖动（拖动模式）", "平移 / 翻页，Pencil 同样适用")
                         gestureRow("双指捏合 / 拖动", "缩放 / 平移")
                         gestureRow("双击（指写模式除外）", "整页 ↔ 2.2×")
                     }

@@ -254,7 +254,10 @@ struct DrawingCanvas: UIViewRepresentable {
     var onUndoTap: (() -> Void)? = nil
     /// 三指点击 → 重做
     var onRedoTap: (() -> Void)? = nil
-    /// 手指拖动页面（关闭「手指书写」后启用）
+    /// 拖动模式（关闭「手指书写」后启用）：进入后是**纯导航**，
+    /// 手指和 Apple Pencil 都只拖动页面，谁都不写字。
+    /// 之前只把 drawingPolicy 设成 .pencilOnly，结果 Pencil 照样落笔，
+    /// 用户以为进了拖动模式就写不了字，实际是「手指写不了、笔还在写」，两种输入行为不一致。
     var fingerPans: Bool = false
     var onFingerPan: ((CGSize) -> Void)? = nil
     var onFingerPanEnd: (() -> Void)? = nil
@@ -271,6 +274,8 @@ struct DrawingCanvas: UIViewRepresentable {
         canvas.alwaysBounceVertical = false
         canvas.alwaysBounceHorizontal = false
         canvas.drawingPolicy = fingerDrawing ? .anyInput : .pencilOnly
+        // 拖动模式是纯导航：连 Pencil 的绘制手势都关掉，两种输入都只拖不写
+        canvas.drawingGestureRecognizer.isEnabled = !fingerPans
         canvas.tool = tool
         canvas.drawing = initialDrawing
 
@@ -331,6 +336,13 @@ struct DrawingCanvas: UIViewRepresentable {
         if coordinator.drawingPolicy != policy {
             coordinator.drawingPolicy = policy
             canvas.drawingPolicy = policy
+        }
+
+        // 拖动模式：把 PencilKit 的绘制手势整个停掉（Pencil 也不再落笔），
+        // 只留下我们自己的平移手势。删掉这行的话，手拖模式里 Pencil 照样写字，
+        // 手指拖、笔写，两种输入的行为就对不上了。
+        if canvas.drawingGestureRecognizer.isEnabled == fingerPans {
+            canvas.drawingGestureRecognizer.isEnabled = !fingerPans
         }
 
         if coordinator.isEnabled != isEnabled {
@@ -438,11 +450,13 @@ struct DrawingCanvas: UIViewRepresentable {
             canvas.addGestureRecognizer(tap)
             self.doubleTap = tap
 
-            // 单指拖动页面：只在「手指=拖动」时启用，避免抢走指写
+            // 单指拖动页面：只在「手指=拖动」时启用，避免抢走指写。
+            // 触摸类型带上 pencil —— 拖动模式里 Pencil 也是拖动，不然笔放上去既写不了也不动，整块画布像死了一样
             let fingerPan = UIPanGestureRecognizer(target: self, action: #selector(handleFingerPan(_:)))
             fingerPan.minimumNumberOfTouches = 1
             fingerPan.maximumNumberOfTouches = 1
-            fingerPan.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
+            fingerPan.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue),
+                                           NSNumber(value: UITouch.TouchType.pencil.rawValue)]
             fingerPan.delegate = self
             fingerPan.cancelsTouchesInView = true
             fingerPan.isEnabled = parent.fingerPans

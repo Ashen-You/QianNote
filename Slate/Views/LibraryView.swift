@@ -53,7 +53,6 @@ struct LibraryView: View {
         NavigationStack(path: $path) {
             ZStack {
                 Theme.libraryBackground.ignoresSafeArea()
-
                 ScrollView {
                     VStack(alignment: .leading, spacing: 18) {
                         folderChips

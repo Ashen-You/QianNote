@@ -64,8 +64,16 @@ struct NotePageView: View {
 
     private var pageSize: CGSize { note.pageSize }
 
+    /// 拖动模式（纯导航）：手指和 Pencil 都只拖页面，任何工具都写不进去
+    private var isNavigating: Bool {
+        !tools.fingerDrawing && onFingerPan != nil
+    }
+
     private var canvasInteractive: Bool {
         guard replayStrokes == nil else { return false }
+        // 拖动模式下画布必须能收触摸：套索 / 文字 / 激光笔会把画布整个关掉，
+        // 拖动手势挂在画布上，画布不响应就变成「既写不了也拖不动」
+        if isNavigating { return true }
         switch tools.activeTool {
         case .text, .lasso, .laser:
             return false
@@ -109,13 +117,14 @@ struct NotePageView: View {
                           onStrokeCommitted: onStrokeCommitted,
                           onUndoTap: onUndoTap,
                           onRedoTap: onRedoTap,
-                          fingerPans: onFingerPan != nil && !tools.fingerDrawing,
+                          fingerPans: isNavigating,
                           onFingerPan: onFingerPan,
                           onFingerPanEnd: onFingerPanEnd)
                 .frame(width: pageSize.width, height: pageSize.height)
                 .opacity(replayStrokes == nil ? 1 : 0)
 
-            if tools.activeTool == .lasso, replayStrokes == nil {
+            // 拖动模式下套索 / 激光 / 文字都退场，页面只负责被拖
+            if tools.activeTool == .lasso, replayStrokes == nil, !isNavigating {
                 lassoLayer
             }
 
@@ -125,13 +134,13 @@ struct NotePageView: View {
                 replayLayer
             }
 
-            if tools.activeTool == .laser {
+            if tools.activeTool == .laser, !isNavigating {
                 LaserOverlay(color: tools.color(for: .laser),
                              width: tools.width(for: .laser))
                     .frame(width: pageSize.width, height: pageSize.height)
             }
 
-            if tools.activeTool == .text {
+            if tools.activeTool == .text, !isNavigating {
                 Color.clear
                     .contentShape(Rectangle())
                     .frame(width: pageSize.width, height: pageSize.height)
@@ -466,7 +475,7 @@ struct NotePageView: View {
     /// 套索模式下才出现：可拖动 / 缩放 / 删除图片
     @ViewBuilder
     private var imageHandleLayer: some View {
-        if let page, tools.activeTool == .lasso, !page.images.isEmpty {
+        if let page, tools.activeTool == .lasso, !isNavigating, !page.images.isEmpty {
             ZStack(alignment: .topLeading) {
                 ForEach(page.images) { item in
                     imageHandleView(item)

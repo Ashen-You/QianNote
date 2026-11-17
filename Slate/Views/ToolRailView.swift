@@ -8,8 +8,13 @@ struct ToolRailView: View {
     /// 收起工具栏（浮层模式下留一颗箭头，收起来后页面整块可用）
     var onCollapse: () -> Void = {}
 
-    /// 手拖模式：手指不写字，只管拖页面 / 翻页（Pencil 照常书写）
+    /// 手拖模式：整页进入纯导航，手指和 Pencil 都只拖页面 / 翻页，谁都不写字
     private var isHandActive: Bool { !tools.fingerDrawing }
+
+    /// 刚刚长按过的工具。长按松手时 Button 的 tap 动作还会再触发一次，
+    /// 用它把这一次「点」吃掉，否则长按开面板会立刻被当成点击关掉。
+    @State private var longPressedTool: ToolKind?
+    @State private var longPressedHand = false
 
     var body: some View {
         VStack(spacing: 4) {
@@ -37,13 +42,22 @@ struct ToolRailView: View {
             .padding(.vertical, 3)
     }
 
-    /// 手指拖动：放在工具栏最上面，和其他书写工具同一处，不拿笔也能一指切过去
+    /// 手：点一下进拖动模式，再点一下回到上一支笔。
+    /// 手拖和笔是互斥的两个状态，点哪个就是哪个，不弹面板。
     private var handButton: some View {
         Button {
-            guard !isHandActive else { return }
-            tools.fingerDrawing = false
-            // 手拖没有颜色/粗细可调，顺手把面板收起来
-            withAnimation(.easeInOut(duration: 0.18)) { showPalette = false }
+            if longPressedHand {
+                longPressedHand = false
+                return
+            }
+            // 切到拖动：顺手把面板收起来（拖动没有颜色/粗细可调）
+            if !isHandActive {
+                tools.fingerDrawing = false
+                withAnimation(.easeInOut(duration: 0.18)) { showPalette = false }
+            } else {
+                // 再点一下 = 回到上一支笔，继续改写
+                tools.fingerDrawing = true
+            }
         } label: {
             ZStack {
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -57,7 +71,17 @@ struct ToolRailView: View {
             .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("手指拖动页面")
+        .simultaneousGesture(
+            LongPressGesture(minimumDuration: 0.45).onEnded { _ in
+                longPressedHand = true
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                // 长按手：直接回到书写并展开面板
+                tools.fingerDrawing = true
+                withAnimation(.easeInOut(duration: 0.18)) { showPalette = true }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { longPressedHand = false }
+            }
+        )
+        .accessibilityLabel(isHandActive ? "拖动模式（点击回到书写）" : "拖动模式：手指和 Pencil 都拖动页面")
     }
 
     private var collapseButton: some View {
@@ -77,15 +101,16 @@ struct ToolRailView: View {
         let isActive = tools.activeTool == tool && tools.fingerDrawing
 
         return Button {
-            let wasActive = isActive
-            // 选任何书写工具都会退出「手拖」，手指重新按当前笔写字
+            // 长按松手会再触发一次点击，这里把那次吃掉
+            if longPressedTool == tool {
+                longPressedTool = nil
+                return
+            }
+            // 点 = 换笔 + 退出拖动模式，**不弹面板**：换笔是高频动作，弹面板反而挡视线
+            tools.activeTool = tool
             tools.fingerDrawing = true
-            if wasActive {
-                // 与 Notability 一致：再点当前工具收起面板，点别的工具则切换并展开面板
-                withAnimation(.easeInOut(duration: 0.18)) { showPalette.toggle() }
-            } else {
-                tools.activeTool = tool
-                withAnimation(.easeInOut(duration: 0.18)) { showPalette = true }
+            if showPalette {
+                withAnimation(.easeInOut(duration: 0.18)) { showPalette = false }
             }
         } label: {
             ZStack {
@@ -109,7 +134,19 @@ struct ToolRailView: View {
             .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
         .buttonStyle(.plain)
+        .simultaneousGesture(
+            // 长按 = 调这支笔的颜色 / 粗细
+            LongPressGesture(minimumDuration: 0.45).onEnded { _ in
+                longPressedTool = tool
+                tools.activeTool = tool
+                tools.fingerDrawing = true
+                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                withAnimation(.easeInOut(duration: 0.18)) { showPalette = true }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { longPressedTool = nil }
+            }
+        )
         .accessibilityLabel(tool.title)
+        .accessibilityHint("长按调整颜色与粗细")
     }
 }
 
