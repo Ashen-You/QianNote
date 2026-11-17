@@ -31,6 +31,10 @@
 		D806A14C48804A448F14EA16 /* PaperStyle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A111C3DD1E64DCF9F0C20F1 /* PaperStyle.swift */; };
 		DACDEA67116642D7A129E9B3 /* PageStripView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 05099B9FDC5F44549B112702 /* PageStripView.swift */; };
 		EA6DD8FA2F85F30687DDFE29 /* CanvasControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 127E60D3CF73443BCE210604 /* CanvasControllerTests.swift */; };
+		AB10000000000000000000A1 /* AppLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB20000000000000000000A1 /* AppLogger.swift */; };
+		AB10000000000000000000A2 /* UpdateChecker.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB20000000000000000000A2 /* UpdateChecker.swift */; };
+		AB10000000000000000000A3 /* AboutView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB20000000000000000000A3 /* AboutView.swift */; };
+		AB10000000000000000000A4 /* GitHubLogUploader.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB20000000000000000000A4 /* GitHubLogUploader.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -70,6 +74,10 @@
 		D4E5F60718293A4B5C6D7E8F /* DocumentOpenCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentOpenCoordinator.swift; sourceTree = "<group>"; };
 		E21DBF8BE24B97DDADDF2BC8 /* QianNoteTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = QianNoteTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		F4D80EC58C5C403D98222809 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		AB20000000000000000000A1 /* AppLogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLogger.swift; sourceTree = "<group>"; };
+		AB20000000000000000000A2 /* UpdateChecker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateChecker.swift; sourceTree = "<group>"; };
+		AB20000000000000000000A3 /* AboutView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AboutView.swift; sourceTree = "<group>"; };
+		AB20000000000000000000A4 /* GitHubLogUploader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitHubLogUploader.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -95,6 +103,7 @@
 			isa = PBXGroup;
 			children = (
 				965ACD67C5884EE6BCA31B73 /* AudioViews.swift */,
+				AB20000000000000000000A3 /* AboutView.swift */,
 				5E9A84799D754F3E8734EB63 /* Components.swift */,
 				D3E0F2DD00C74E0CAADF6E38 /* DrawingCanvas.swift */,
 				42E0D0D0FDEA44C5AAB33008 /* EditorView.swift */,
@@ -161,10 +170,13 @@
 			isa = PBXGroup;
 			children = (
 				76FB3D3BA032417D872359B9 /* AudioController.swift */,
+				AB20000000000000000000A1 /* AppLogger.swift */,
 				B2C3D4E5F60718293A4B5C6D /* DocumentImport.swift */,
 				D4E5F60718293A4B5C6D7E8F /* DocumentOpenCoordinator.swift */,
+				AB20000000000000000000A4 /* GitHubLogUploader.swift */,
 				CAE64C69A1654F738FCCE09A /* NoteStore.swift */,
 				82F8751E903C4239AA9DD852 /* PageRenderer.swift */,
+				AB20000000000000000000A2 /* UpdateChecker.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -296,11 +308,15 @@
 				D806A14C48804A448F14EA16 /* PaperStyle.swift in Sources */,
 				229054DA8F8C425B9534998F /* ToolStore.swift in Sources */,
 				0AE7F4709F5B4B0390D9500D /* AudioController.swift in Sources */,
+				AB10000000000000000000A1 /* AppLogger.swift in Sources */,
 				A1B2C3D4E5F60718293A4B5C /* DocumentImport.swift in Sources */,
 				C3D4E5F60718293A4B5C6D7E /* DocumentOpenCoordinator.swift in Sources */,
+				AB10000000000000000000A4 /* GitHubLogUploader.swift in Sources */,
 				92D98785BEE0498EBEBF9F08 /* NoteStore.swift in Sources */,
 				6FC69CDA5A904F9D8E14B50E /* PageRenderer.swift in Sources */,
+				AB10000000000000000000A2 /* UpdateChecker.swift in Sources */,
 				3A585DB8CB094F89AE70C08D /* AudioViews.swift in Sources */,
+				AB10000000000000000000A3 /* AboutView.swift in Sources */,
 				917083C8B2B142F59ECE03EE /* Components.swift in Sources */,
 				57B5C7E6537A44B1AB86A9F5 /* DrawingCanvas.swift in Sources */,
 				A642C0E340B84D7483E2B8E5 /* EditorView.swift in Sources */,
@@ -435,7 +451,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 11;
+				CURRENT_PROJECT_VERSION = 12;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = QianNote/Info.plist;
@@ -453,7 +469,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.3.5;
+				MARKETING_VERSION = 1.3.6;
 				PRODUCT_BUNDLE_IDENTIFIER = com.example.qiannote;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -533,7 +549,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 11;
+				CURRENT_PROJECT_VERSION = 12;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = QianNote/Info.plist;
@@ -551,7 +567,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.3.5;
+				MARKETING_VERSION = 1.3.6;
 				PRODUCT_BUNDLE_IDENTIFIER = com.example.qiannote;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;

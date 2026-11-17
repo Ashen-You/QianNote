@@ -442,23 +442,30 @@ struct EditorView: View {
     /// 多页纵向连续滚动：所有页在一个纵向 ScrollView 里无缝排布。
     /// 手指上下滑动连续翻页（看 PDF 的体验），Pencil 照常在各页画布上书写。
     /// 每页一个独立的撤销栈（CanvasControllerPool 已按页隔离）。
+    ///
+    /// 缩放作用在「整个滚动容器」上：每页只是一个原尺寸 item 直接拼接（无任何遮罩 / 额外缩放），
+    /// 缩放（zoom）统一加在 ScrollView 外层，页面内容跟整个列表一起放大 / 平移。
     private func continuousArea(_ note: Note) -> some View {
         GeometryReader { geo in
             let inset: CGFloat = immersive ? 0 : (compact ? 8 : 24)
-            let width = max(geo.size.width - inset * 2, 1)
+            // 页面适配后的显示宽度（不含用户缩放 zoom）
+            let fitWidth = max(geo.size.width - inset * 2, 1)
             let pageWidth = CGFloat(max(note.pageWidth, 1))
             let pageHeight = CGFloat(max(note.pageHeight, 1))
-            // 基础适配：让页面宽度填满可用宽度（不含用户缩放 zoom）。
-            let fit = width / max(pageWidth, 1)
-            let renderedHeight = pageHeight * fit
+            let fit = fitWidth / max(pageWidth, 1)
+            // 每页真实布局尺寸：宽高都随 zoom 线性放大（面积自然 × zoom²）
+            let renderedWidth = pageWidth * fit * zoom
+            let renderedHeight = pageHeight * fit * zoom
 
             ScrollViewReader { proxy in
                 ScrollView(.vertical, showsIndicators: false) {
                     LazyVStack(spacing: immersive ? 8 : 18) {
                         ForEach(Array(note.pages.enumerated()), id: \.element.id) { index, page in
                             flowPage(note, page: page, index: index,
-                                     fit: fit, width: width, renderedHeight: renderedHeight,
-                                     inset: inset, proxy: proxy, geo: geo)
+                                     fit: fit, zoom: zoom,
+                                     renderedWidth: renderedWidth,
+                                     renderedHeight: renderedHeight,
+                                     proxy: proxy, geo: geo)
                                 .id(index)
                                 .onAppear {
                                     // 只负责把该页的撤销栈激活，页码同步交给 scrollPosition。
@@ -473,6 +480,9 @@ struct EditorView: View {
                     .padding(.top, immersive ? geo.safeAreaInsets.top : 16)
                     .padding(.bottom, immersive ? max(geo.safeAreaInsets.bottom, 16) : 16)
                 }
+                // 缩放作用在每页的真实布局尺寸上（flowPage 内 fit*zoom），
+                // ScrollView 内容尺寸随 zoom 变大，滚动范围天然匹配。
+                // 放大后横向可平移：offset(pan) 只做水平平移（纵向交给 ScrollView 滚动）。
                 .offset(x: pan.width)
                 .scrollPosition(id: $continuousPage)
                 .onAppear {
@@ -511,12 +521,14 @@ struct EditorView: View {
     }
 
     /// 连续滚动模式下的一页：一个普通列表 item。
-    /// 页面（PDF 底稿 + 墨迹）在 NotePageView 内部完整渲染，这里只做「适配宽度 + 用户缩放」。
+    /// 页面（PDF 底稿 + 墨迹）在 NotePageView 内部完整渲染，这里用「真实布局尺寸」缩放：
+    /// scaleEffect(fit*zoom) 把原尺寸页面放大，frame 用放大后的宽高，ScrollView 滚动范围天然匹配。
     /// 无任何覆盖层 / 额外背景 / 阴影——页与页直接拼接。
     @ViewBuilder
     private func flowPage(_ note: Note, page: NotePage, index: Int,
-                          fit: CGFloat, width: CGFloat, renderedHeight: CGFloat,
-                          inset: CGFloat, proxy: ScrollViewProxy, geo: GeometryProxy) -> some View {
+                          fit: CGFloat, zoom: CGFloat,
+                          renderedWidth: CGFloat, renderedHeight: CGFloat,
+                          proxy: ScrollViewProxy, geo: GeometryProxy) -> some View {
         let pageWidth = CGFloat(max(note.pageWidth, 1))
         let pageHeight = CGFloat(max(note.pageHeight, 1))
         NotePageView(note: note,
@@ -528,7 +540,7 @@ struct EditorView: View {
                          applyFlowPinch(delta, focal: focal, viewport: geo.size)
                      },
                      onPan: { delta in
-                         applyFlowPan(delta, contentWidth: width * zoom, viewport: geo.size)
+                         applyFlowPan(delta, contentWidth: renderedWidth, viewport: geo.size)
                      },
                      onDoubleTap: { focal in
                          toggleFlowZoom(focal: focal, viewport: geo.size)
@@ -546,16 +558,19 @@ struct EditorView: View {
                      },
                      onFingerPanEnd: { flowSwipeAccum = 0 },
                      fingerPans: false)
-            // 适配宽度 + 用户缩放。frame 用缩放后的真实尺寸，让 ScrollView 滚动范围天然匹配。
-            .scaleEffect(fit * zoom, anchor: .top)
-            .frame(width: width * zoom, height: renderedHeight * zoom)
+            // 对照单页 pageArea 的缩放链：先固定原始尺寸 → scaleEffect(center) → 缩放后 frame。
+            // 页与页直接拼接，无遮罩。
+            .frame(width: pageWidth, height: pageHeight)
+            .scaleEffect(fit * zoom, anchor: .center)
+            .frame(width: renderedWidth, height: renderedHeight)
             .clipped()
     }
 
     // MARK: 连续滚动整体缩放（zoom 作用在整个页面流，而非单页）
     //
-    // 结构：ScrollView（列表）→ .scaleEffect(zoom, anchor: .top) → .offset(pan)。
-    // zoom 线性作用在容器宽高上（面积自然 × zoom²），offset 是缩放后的屏幕坐标。
+    // 结构：ScrollView（列表，每页 flowPage 用 scaleEffect(fit*zoom) + frame(×zoom) 做真实布局缩放）
+    //       → .offset(x: pan.width) 水平平移。
+    // zoom 线性作用在每页宽高上（面积自然 × zoom²），pan 是缩放后的屏幕坐标（仅水平）。
     // 每页只是列表里的一个普通 item，页面内容（PDF + 墨迹）在 NotePageView 内部渲染，无覆盖层。
 
     /// 双指捏合：围绕捏合中心缩放整个页面流。
@@ -573,7 +588,7 @@ struct EditorView: View {
         if new <= 1.001 {
             pan = .zero
         }
-        pan = clampedFlowPan(viewport: viewport)
+        pan = clampedFlowPan(contentWidth: contentW * k, viewport: viewport)
     }
 
     /// 双指拖动：放大后水平平移页面流（纵向由 ScrollView 原生滚动负责）。
@@ -581,7 +596,7 @@ struct EditorView: View {
     private func applyFlowPan(_ delta: CGSize, contentWidth: CGFloat, viewport: CGSize) {
         guard zoom > 1.001 else { return }
         pan.width += delta.width
-        pan = clampedFlowPan(viewport: viewport)
+        pan = clampedFlowPan(contentWidth: contentWidth, viewport: viewport)
     }
 
     private func toggleFlowZoom(focal: CGPoint, viewport: CGSize) {
@@ -596,12 +611,13 @@ struct EditorView: View {
             zoom = target
             pan = CGSize(width: newPanX, height: 0)
         }
-        pan = clampedFlowPan(viewport: viewport)
+        pan = clampedFlowPan(contentWidth: contentW * target, viewport: viewport)
     }
 
     /// 限制水平平移范围，避免放大后的页面流被拖出左右边缘（纵向交给 ScrollView）。
-    private func clampedFlowPan(viewport: CGSize) -> CGSize {
-        let maxX = max(0, (viewport.width * zoom - viewport.width) / 2)
+    /// contentWidth 是缩放后的真实页面宽度；平移量上限 = 页面超出视口的宽度的一半。
+    private func clampedFlowPan(contentWidth: CGFloat, viewport: CGSize) -> CGSize {
+        let maxX = max(0, (contentWidth - viewport.width) / 2)
         return CGSize(width: min(max(pan.width, -maxX), maxX), height: 0)
     }
 

@@ -14,6 +14,7 @@ struct LibraryView: View {
     @State private var sortOption: SortOption = .updated
     @State private var showImporter = false
     @State private var showIconPicker = false
+    @State private var showAbout = false
     @StateObject private var iconManager = AppIconManager()
 
     @State private var prompt: LibraryPrompt?
@@ -100,6 +101,9 @@ struct LibraryView: View {
             .sheet(isPresented: $showIconPicker) {
                 AppIconPicker(manager: iconManager)
             }
+            .sheet(isPresented: $showAbout) {
+                NavigationStack { AboutView() }
+            }
             .alert("提示", isPresented: Binding(get: { iconManager.errorMessage != nil },
                                                 set: { if !$0 { iconManager.errorMessage = nil } })) {
                 Button("好", role: .cancel) { iconManager.errorMessage = nil }
@@ -168,6 +172,14 @@ struct LibraryView: View {
                 } label: {
                     Label("删除「\(folder.name)」", systemImage: "trash")
                 }
+            }
+
+            Divider()
+
+            Button {
+                showAbout = true
+            } label: {
+                Label("关于", systemImage: "info.circle")
             }
         } label: {
             Image(systemName: "ellipsis.circle")

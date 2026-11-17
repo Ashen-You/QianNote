@@ -19,6 +19,11 @@ struct QianNoteApp: App {
                 }
         }
     }
+
+    init() {
+        // 启动日志采集：记录一次启动，并检测上次是否异常退出
+        AppLogger.shared.info("App 启动（版本 \(UpdateChecker.currentVersion) build \(UpdateChecker.currentBuild)）")
+    }
 }
 
 /// 只干一件事：把主屏快捷操作接进来。文档打开走 SwiftUI 的 onOpenURL，不需要 AppDelegate。
