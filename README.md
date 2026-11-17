@@ -1,8 +1,8 @@
-# Slate — iPad 手写笔记 App（Notability 风格）
+# Qian's Note — iPad 手写笔记 App（Notability 风格）
 
-一个用 **SwiftUI + PencilKit** 编写的 iPad 手写笔记应用，参考 Notability 的核心体验：手写、PDF 批注、录音同步、多页笔记、导出分享。
+一个用 **SwiftUI + PencilKit** 编写的 iPad 手写笔记应用，参考 Notability 的核心体验：手写、PDF 批注、录音同步、多页笔记、导出分享。当前版本 **v1.1.0**。
 
-工程**不含任何签名配置**，打开后选择你自己的开发者 Team 即可编译运行。
+工程名 / Bundle ID / 数据目录沿用内部标识 `Slate`（避免老笔记"消失"），App 对外显示名为 **Qian's Note**。工程**不含任何签名配置**，打开后选择你自己的开发者 Team 即可编译运行。
 
 ---
 
@@ -10,11 +10,13 @@
 
 | 项目 | 要求 |
 | --- | --- |
-| Xcode | 15.0 及以上（推荐 16.x） |
-| 系统 | iOS / iPadOS 17.0+ |
+| Xcode | **26.0 及以上**（代码用了 iOS 26 的 Liquid Glass，Xcode 16.x 只有 iOS 18 SDK 会编译失败） |
+| 系统 | iOS / iPadOS 17.0+（iOS 26 起启用系统玻璃质感，低版本自动降级为毛玻璃） |
 | 语言 | Swift 5（工程已设为 Swift 5 语言模式） |
 | 设备 | iPad（推荐配 Apple Pencil）；iPhone 也能运行 |
 | 依赖 | 无第三方库，全部使用系统框架（SwiftUI、PencilKit、PDFKit、AVFoundation） |
+
+> CI 工作流 `.github/workflows/build-ipa.yml` 跑在 `macos-26`（默认 Xcode 26.6 / iOS 26.5 SDK）。若自建 CI 仍用 `macos-15`，会在 `Components.swift` 的 `Glass` / `.glassEffect` 上报 `cannot find type 'Glass'`。
 
 ## 2. 打开 & 签名（三步）
 
@@ -134,6 +136,7 @@ TEAM_ID=你的TeamID bash Scripts/build_ipa.sh --signed   # 用本机证书导�
 - 搜索、排序（最近修改 / 创建时间 / 标题）、收藏筛选
 - 长按菜单：重命名、收藏、复制副本、移动、删除
 - 导出 PDF（当前笔记全部页面）→ 系统分享面板
+- **两套 App 图标可切换**（v1.1.0 新增）：顶栏图标按钮打开选择器，默认「手写笔记」截图版，备用「AI 重绘」版；切换走系统 `setAlternateIconName`，iOS 弹窗确认后立即生效。启动自愈：若停留在「图标名有、资源没有」的坏状态（主屏白底网格），冷启动自动退回主图标
 
 ## 5. 代码结构
 
@@ -148,9 +151,10 @@ Slate/
 │   ├── NoteStore.swift         数据仓库：索引读写、增删改查、墨迹文件、缩略图、PDF 导入导出、录音元数据
 │   ├── PageRenderer.swift      渲染合成：纸张 / PDF 底稿 / 墨迹 / 文字 → UIImage 或 PDF
 │   ├── AudioController.swift   录音与播放（AVAudioRecorder / AVAudioPlayer + 定时器）
-│   └── DocumentImport.swift    Word / RTF / HTML / 图片 → PDF 的导入转换
+│   ├── DocumentImport.swift    Word / RTF / HTML / 图片 → PDF 的导入转换
+│   └── DocumentOpenCoordinator.swift  外部文档/快捷操作导入的统一协调入口
 ├── Views/
-│   ├── LibraryView.swift       笔记库（网格、文件夹、搜索、排序、导入）
+│   ├── LibraryView.swift       笔记库（网格、文件夹、搜索、排序、导入、图标选择器入口）
 │   ├── NoteCardView.swift      笔记卡片（缩略图 + 元信息）
 │   ├── EditorView.swift        编辑页骨架：顶栏 / 左侧工具栏 / 画布 / 底栏 / 缩略图栏
 │   ├── NotePageView.swift      单页：背景 + 画布 + 文字层 + 纸张绘制
@@ -158,11 +162,11 @@ Slate/
 │   ├── ToolRailView.swift      左侧工具栏 + 底部颜色 / 粗细栏
 │   ├── PageStripView.swift     右侧页面缩略图栏
 │   ├── AudioViews.swift        录音按钮、录音浮条、页面-录音同步器
-│   └── Components.swift        通用组件（毛玻璃面板、图标按钮、颜色点、分享面板、错误条）
+│   └── Components.swift        通用组件（玻璃面板、图标按钮、颜色点、分享面板、错误条、AppIconPicker）
 ├── Support/
 │   ├── Theme.swift             主题色
-│   └── Extensions.swift        Color↔Hex、数组安全下标、等比缩放等
-└── Assets.xcassets             App 图标 + 强调色
+│   └── Extensions.swift        Color↔Hex、数组安全下标、等比缩放、AppIconChoice / AppIconManager（备用图标切换）
+└── Assets.xcassets             AppIcon + AppIconAI 两套图标 + 强调色 + 图标选择缩略图
 ```
 
 ## 6. 数据存放方式
@@ -219,6 +223,12 @@ Documents/Slate/
 
 ## 9. 改名 / 换图标
 
-- App 名称：`Signing & Capabilities` 同页的 `Display Name`，或在 `project.pbxproj` 里改 `INFOPLIST_KEY_CFBundleDisplayName`
-- Bundle ID：`PRODUCT_BUNDLE_IDENTIFIER`
-- 图标：替换 `Slate/Assets.xcassets/AppIcon.appiconset/AppIcon.png`（1024×1024，无圆角）
+- **App 显示名**（主屏下方文字，当前 `Qian's Note`）：`Signing & Capabilities` 同页的 `Display Name`，或改 `project.pbxproj` 两处 `INFOPLIST_KEY_CFBundleDisplayName`（Debug / Release 都要改）。代码里的用户可见文案（欢迎笔记标题、导出默认名、权限提示等）也要一起改，散落在 `NoteStore.swift`、`AudioViews.swift`、`DocumentImport.swift`、`DocumentOpenCoordinator.swift`。
+- **刻意不改的内部标识**：`PRODUCT_BUNDLE_IDENTIFIER = com.example.slate`、数据目录 `Documents/Slate/`、`SlateApp` / `SlateGlass*` 类型名。改包 ID 或目录会让老笔记"消失"，类型名是内部标识符、改了没有用户可见收益。
+- **主图标**：替换 `Slate/Assets.xcassets/AppIcon.appiconset/AppIcon.png`（1024×1024，无圆角、满幅）。
+- **加一套备用图标**（运行时可切换，v1.1.0 起已有 `AppIconAI`）：
+  1. 新建 `Slate/Assets.xcassets/<名字>.appiconset`，放入 1024×1024 满幅 png + 对应 `Contents.json`；
+  2. 在 `project.pbxproj` **两处** buildSettings 加 `ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES = <名字>;`；
+  3. 在 `Extensions.swift` 的 `AppIconChoice`、`Components.swift` 的 `AppIconPicker` 里加对应项与缩略图。
+  **不要**在 `Info.plist` 手写 `CFBundleIcons / CFBundleAlternateIcons / CFBundleIconFiles`——那样要求包里真有同名 png，否则 `setAlternateIconName` 会"成功"但系统找不到图，主屏变白底网格占位图。正确做法是由 `actool` 依据构建设置把 `CFBundleAlternateIcons` 写进产物 plist。
+  验证：clean build 后 `xcrun assetutil --info <app>/Assets.car` 里要同时出现两套图标的 `Name`。

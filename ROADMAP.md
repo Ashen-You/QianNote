@@ -1,6 +1,7 @@
-# Slate vs Notability — 差距对照与实施路线
+# Qian's Note vs Notability — 差距对照与实施路线
 
 > 对照基准：Notability 2026（iPadOS 版）。本文件只记录**能力差距**与**实施顺序**，不重复 README 里的功能清单。
+> 文中「Slate 原状」指工程内部标识，App 对外显示名为 Qian's Note；截至 v1.1.0，Step 1–11 均已完成。
 
 ## 一、差距对照
 
