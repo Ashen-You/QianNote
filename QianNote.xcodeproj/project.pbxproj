@@ -7,7 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		00470271669A49F4A814F7EC /* SlateApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 540CD1790D8D40AB82A749DE /* SlateApp.swift */; };
+		00470271669A49F4A814F7EC /* QianNoteApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 540CD1790D8D40AB82A749DE /* QianNoteApp.swift */; };
 		7A3E646DE9274C099FD98BE9 /* Note.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1964CE8CDD164319B1D525F0 /* Note.swift */; };
 		D806A14C48804A448F14EA16 /* PaperStyle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A111C3DD1E64DCF9F0C20F1 /* PaperStyle.swift */; };
 		229054DA8F8C425B9534998F /* ToolStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 014DAEE3FE3D41A38164D33C /* ToolStore.swift */; };
@@ -31,8 +31,8 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		51523F4DA82F48B2AC3DC6CC /* Slate.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Slate.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		540CD1790D8D40AB82A749DE /* SlateApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SlateApp.swift; sourceTree = "<group>"; };
+		51523F4DA82F48B2AC3DC6CC /* QianNote.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = QianNote.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		540CD1790D8D40AB82A749DE /* QianNoteApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QianNoteApp.swift; sourceTree = "<group>"; };
 		1964CE8CDD164319B1D525F0 /* Note.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Note.swift; sourceTree = "<group>"; };
 		2A111C3DD1E64DCF9F0C20F1 /* PaperStyle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaperStyle.swift; sourceTree = "<group>"; };
 		014DAEE3FE3D41A38164D33C /* ToolStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolStore.swift; sourceTree = "<group>"; };
@@ -69,7 +69,7 @@
 		385B45F9CE62472690DFA75A = {
 			isa = PBXGroup;
 			children = (
-				52577DA3B7F04777A3CF0881 /* Slate */,
+				52577DA3B7F04777A3CF0881 /* QianNote */,
 				B81796B2076246E7986EA7F7 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -77,22 +77,22 @@
 		B81796B2076246E7986EA7F7 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				51523F4DA82F48B2AC3DC6CC /* Slate.app */,
+				51523F4DA82F48B2AC3DC6CC /* QianNote.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
 		};
-		52577DA3B7F04777A3CF0881 /* Slate */ = {
+		52577DA3B7F04777A3CF0881 /* QianNote */ = {
 			isa = PBXGroup;
 			children = (
-				540CD1790D8D40AB82A749DE /* SlateApp.swift */,
+				540CD1790D8D40AB82A749DE /* QianNoteApp.swift */,
 				2E7EBEB2EAE34C19AAA32782 /* Models */,
 				61FFD36B6D404E04971CD192 /* Services */,
 				2BA2BB6CA7BA4ED694892FFB /* Views */,
 				32A0F817DA274E6EAF165B1B /* Support */,
 				F4D80EC58C5C403D98222809 /* Assets.xcassets */,
 			);
-			path = Slate;
+			path = QianNote;
 			sourceTree = "<group>";
 		};
 		2E7EBEB2EAE34C19AAA32782 /* Models */ = {
@@ -145,9 +145,9 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		783A812E902C4223B88BA481 /* Slate */ = {
+		783A812E902C4223B88BA481 /* QianNote */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 93DE3908E39B489CB73F0268 /* Build configuration list for PBXNativeTarget "Slate" */;
+			buildConfigurationList = 93DE3908E39B489CB73F0268 /* Build configuration list for PBXNativeTarget "QianNote" */;
 			buildPhases = (
 				2A522527331B4EF99766978A /* Sources */,
 				91077C6E460B48738D523383 /* Frameworks */,
@@ -157,9 +157,9 @@
 			);
 			dependencies = (
 			);
-			name = Slate;
-			productName = Slate;
-			productReference = 51523F4DA82F48B2AC3DC6CC /* Slate.app */;
+			name = QianNote;
+			productName = QianNote;
+			productReference = 51523F4DA82F48B2AC3DC6CC /* QianNote.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -177,7 +177,7 @@
 					};
 				};
 			};
-			buildConfigurationList = 99662595C5EE40948377F9DD /* Build configuration list for PBXProject "Slate" */;
+			buildConfigurationList = 99662595C5EE40948377F9DD /* Build configuration list for PBXProject "QianNote" */;
 			compatibilityVersion = "Xcode 14.0";
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
@@ -190,7 +190,7 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				783A812E902C4223B88BA481 /* Slate */,
+				783A812E902C4223B88BA481 /* QianNote */,
 			);
 		};
 /* End PBXProject section */
@@ -211,7 +211,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				00470271669A49F4A814F7EC /* SlateApp.swift in Sources */,
+				00470271669A49F4A814F7EC /* QianNoteApp.swift in Sources */,
 				7A3E646DE9274C099FD98BE9 /* Note.swift in Sources */,
 				D806A14C48804A448F14EA16 /* PaperStyle.swift in Sources */,
 				229054DA8F8C425B9534998F /* ToolStore.swift in Sources */,
@@ -366,7 +366,7 @@
 				CURRENT_PROJECT_VERSION = 4;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = Slate/Info.plist;
+				INFOPLIST_FILE = QianNote/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Qian's Note";
 				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "录制语音笔记需要使用麦克风。";
@@ -382,7 +382,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.1;
-				PRODUCT_BUNDLE_IDENTIFIER = com.example.slate;
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.qiannote;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_STRICT_CONCURRENCY = minimal;
@@ -401,7 +401,7 @@
 				CURRENT_PROJECT_VERSION = 4;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = Slate/Info.plist;
+				INFOPLIST_FILE = QianNote/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Qian's Note";
 				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "录制语音笔记需要使用麦克风。";
@@ -417,7 +417,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.1;
-				PRODUCT_BUNDLE_IDENTIFIER = com.example.slate;
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.qiannote;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_STRICT_CONCURRENCY = minimal;
@@ -429,7 +429,7 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		99662595C5EE40948377F9DD /* Build configuration list for PBXProject "Slate" */ = {
+		99662595C5EE40948377F9DD /* Build configuration list for PBXProject "QianNote" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				B7F9A6704E894D4783CDC16C /* Debug */,
@@ -438,7 +438,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		93DE3908E39B489CB73F0268 /* Build configuration list for PBXNativeTarget "Slate" */ = {
+		93DE3908E39B489CB73F0268 /* Build configuration list for PBXNativeTarget "QianNote" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				9880BCEC13A841299718FD34 /* Debug */,

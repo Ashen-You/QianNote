@@ -356,7 +356,7 @@ struct NotePageView: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
-        .slateGlassCapsule()
+        .qianNoteGlassCapsule()
     }
 
     private func selectionMoveGesture(_ selection: InkSelectionResult) -> some Gesture {

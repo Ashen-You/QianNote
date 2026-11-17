@@ -7,11 +7,11 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
-SCHEME="Slate"
-PROJECT="Slate.xcodeproj"
+SCHEME="QianNote"
+PROJECT="QianNote.xcodeproj"
 BUILD_DIR="build"
-ARCHIVE="$BUILD_DIR/Slate.xcarchive"
-IPA_UNSIGNED="$BUILD_DIR/Slate-unsigned.ipa"
+ARCHIVE="$BUILD_DIR/QianNote.xcarchive"
+IPA_UNSIGNED="$BUILD_DIR/QianNote-unsigned.ipa"
 
 if ! command -v xcodebuild >/dev/null 2>&1; then
   echo "错误：未找到 xcodebuild。请在装有 Xcode 的 macOS 上运行本脚本。" >&2
@@ -88,16 +88,16 @@ xcodebuild archive \
   ENABLE_BITCODE=NO \
   ONLY_ACTIVE_ARCH=NO
 
-APP="$ARCHIVE/Products/Applications/Slate.app"
+APP="$ARCHIVE/Products/Applications/QianNote.app"
 if [[ ! -d "$APP" ]]; then
-  echo "错误：归档里没有 Slate.app，编译失败了。" >&2
+  echo "错误：归档里没有 QianNote.app，编译失败了。" >&2
   exit 1
 fi
 
 echo "==> 打包 Payload"
 mkdir -p "$BUILD_DIR/Payload"
 cp -R "$APP" "$BUILD_DIR/Payload/"
-( cd "$BUILD_DIR" && zip -qry "Slate-unsigned.ipa" Payload )
+( cd "$BUILD_DIR" && zip -qry "QianNote-unsigned.ipa" Payload )
 
 echo
 echo "完成：$IPA_UNSIGNED（$(du -h "$IPA_UNSIGNED" | cut -f1)）"

@@ -93,7 +93,7 @@
 	<array>
 		<dict>
 			<key>UIApplicationShortcutItemType</key>
-			<string>com.example.slate.newNote</string>
+			<string>com.example.qiannote.newNote</string>
 			<key>UIApplicationShortcutItemTitle</key>
 			<string>新建笔记</string>
 			<key>UIApplicationShortcutItemIconType</key>
@@ -101,7 +101,7 @@
 		</dict>
 		<dict>
 			<key>UIApplicationShortcutItemType</key>
-			<string>com.example.slate.importDocument</string>
+			<string>com.example.qiannote.importDocument</string>
 			<key>UIApplicationShortcutItemTitle</key>
 			<string>导入文档</string>
 			<key>UIApplicationShortcutItemIconType</key>

@@ -136,7 +136,7 @@ struct LibraryView: View {
                 consumePending()
             }
             .onChange(of: opener.noteToOpen) { _, _ in consumePending() }
-            .onReceive(NotificationCenter.default.publisher(for: .slateShortcutTriggered)) { _ in
+            .onReceive(NotificationCenter.default.publisher(for: .qianNoteShortcutTriggered)) { _ in
                 consumePending()
             }
         }

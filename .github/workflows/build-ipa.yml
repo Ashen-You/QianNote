@@ -25,12 +25,12 @@ jobs:
       - name: Build archive (no code signing)
         run: |
           xcodebuild archive \
-            -project Slate.xcodeproj \
-            -scheme Slate \
+            -project QianNote.xcodeproj \
+            -scheme QianNote \
             -configuration Release \
             -sdk iphoneos \
             -destination 'generic/platform=iOS' \
-            -archivePath build/Slate.xcarchive \
+            -archivePath build/QianNote.xcarchive \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
@@ -39,18 +39,18 @@ jobs:
 
       - name: Package Payload into IPA
         run: |
-          APP="build/Slate.xcarchive/Products/Applications/Slate.app"
-          test -d "$APP" || { echo "找不到 Slate.app，归档失败"; exit 1; }
+          APP="build/QianNote.xcarchive/Products/Applications/QianNote.app"
+          test -d "$APP" || { echo "找不到 QianNote.app，归档失败"; exit 1; }
           mkdir -p build/Payload
           cp -R "$APP" build/Payload/
           cd build
-          zip -qry Slate-unsigned.ipa Payload
-          ls -lh Slate-unsigned.ipa
-          /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" Slate.xcarchive/Products/Applications/Slate.app/Info.plist || true
+          zip -qry QianNote-unsigned.ipa Payload
+          ls -lh QianNote-unsigned.ipa
+          /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" QianNote.xcarchive/Products/Applications/QianNote.app/Info.plist || true
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: Slate-unsigned-ipa
-          path: build/Slate-unsigned.ipa
+          name: QianNote-unsigned-ipa
+          path: build/QianNote-unsigned.ipa
           if-no-files-found: error

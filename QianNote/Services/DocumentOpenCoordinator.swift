@@ -5,8 +5,8 @@ import UIKit
 
 /// 主屏长按图标出现的快捷操作类型（与 Info.plist 的 UIApplicationShortcutItemType 对应）
 enum HomeShortcut: String {
-    case newNote = "com.example.slate.newNote"
-    case importDocument = "com.example.slate.importDocument"
+    case newNote = "com.example.qiannote.newNote"
+    case importDocument = "com.example.qiannote.importDocument"
 }
 
 /// 冷启动时的快捷操作要先存下来：`configurationForConnecting` 跑在界面出现之前，
@@ -32,7 +32,7 @@ enum ShortcutInbox {
 
 extension Notification.Name {
     /// App 已在运行时收到快捷操作（冷启动走 ShortcutInbox）
-    static let slateShortcutTriggered = Notification.Name("slate.shortcut.triggered")
+    static let qianNoteShortcutTriggered = Notification.Name("qiannote.shortcut.triggered")
 }
 
 // MARK: - 外部文档打开

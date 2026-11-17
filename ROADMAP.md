@@ -1,13 +1,13 @@
 # Qian's Note vs Notability — 差距对照与实施路线
 
 > 对照基准：Notability 2026（iPadOS 版）。本文件只记录**能力差距**与**实施顺序**，不重复 README 里的功能清单。
-> 文中「Slate 原状」指工程内部标识，App 对外显示名为 Qian's Note；截至 v1.1.0，Step 1–11 均已完成。
+> 文中「QianNote 原状」指当前实现；截至 v1.1.0，Step 1–11 均已完成。
 
 ## 一、差距对照
 
 ### 1. 阅读与书写视野
 
-| 能力 | Notability | Slate 原状 | 根因 |
+| 能力 | Notability | QianNote 原状 | 根因 |
 | --- | --- | --- | --- |
 | 全屏 | 工具栏可完全收起，页面铺满屏幕 | ❌ 页面被上下各 70/84pt 的工具栏挤压 | `EditorView.workspace` 的固定 padding |
 | PDF 清晰度 | 矢量渲染，放大不糊 | ❌ `page.thumbnail(size×2)` 光栅缩略图 | `NoteStore.pdfPageImage` / `PageRenderer.drawContent` |
@@ -17,7 +17,7 @@
 
 ### 2. 笔与工具
 
-| 能力 | Notability | Slate 原状 |
+| 能力 | Notability | QianNote 原状 |
 | --- | --- | --- |
 | 笔尖 | 钢笔 / 圆珠笔 / 毛笔 / 铅笔 / 荧光笔 / 虚线 | ✅ 钢笔 / 铅笔 / 毛笔 / 单线 / 蜡笔 / 水彩 / 荧光笔（7 种，缺虚线） |
 | 粗细 | 连续 0.5–5mm，带档位 | 滑块 1–20（仅数值，无档位概念） |
@@ -30,7 +30,7 @@
 
 ### 3. 文档与多媒体
 
-| 能力 | Notability | Slate 原状 |
+| 能力 | Notability | QianNote 原状 |
 | --- | --- | --- |
 | 导入格式 | PDF / DOC / PPT / 图片 / 扫描件 | 仅 PDF |
 | 图片插入 | 支持，可裁剪 | ❌ 无 |

@@ -27,7 +27,7 @@ struct ToolRailView: View {
             collapseButton
         }
         .padding(7)
-        .slateGlassPanel(cornerRadius: 20, interactive: true)
+        .qianNoteGlassPanel(cornerRadius: 20, interactive: true)
     }
 
     private var separator: some View {
@@ -183,7 +183,7 @@ struct CompactToolBar: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
-        .slateGlassCapsule(interactive: true)
+        .qianNoteGlassCapsule(interactive: true)
     }
 
     private var divider: some View {
@@ -422,7 +422,7 @@ struct ToolPaletteView: View {
         }
         .padding(12)
         .frame(width: 200, alignment: .leading)
-        .slateGlassPanel(cornerRadius: 18)
+        .qianNoteGlassPanel(cornerRadius: 18)
     }
 
     private func isSelected(_ preset: CGFloat) -> Bool {

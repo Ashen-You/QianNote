@@ -142,7 +142,7 @@ struct AudioPanelView: View {
         }
         .padding(.horizontal, compact ? 14 : 18)
         .padding(.vertical, 10)
-        .slateGlassCapsule(tint: Color.red.opacity(0.10))
+        .qianNoteGlassCapsule(tint: Color.red.opacity(0.10))
     }
 
     private var playbackBar: some View {
@@ -186,7 +186,7 @@ struct AudioPanelView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
-        .slateGlassCapsule()
+        .qianNoteGlassCapsule()
         .padding(.horizontal, compact ? 10 : 0)
     }
 }

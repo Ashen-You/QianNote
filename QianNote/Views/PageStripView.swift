@@ -72,7 +72,7 @@ struct PageStripView: View {
             .padding(.bottom, 10)
             .accessibilityLabel("添加页面")
         }
-        .slateGlassPanel(cornerRadius: 18)
+        .qianNoteGlassPanel(cornerRadius: 18)
     }
 }
 

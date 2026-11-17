@@ -257,7 +257,7 @@ struct EditorView: View {
                 .font(.system(size: 11, weight: .bold))
                 .foregroundStyle(Color.primary.opacity(0.5))
                 .frame(width: 20, height: 54)
-                .slateGlassCapsule()
+                .qianNoteGlassCapsule()
         }
         .buttonStyle(.plain)
         .accessibilityLabel("显示工具栏")
@@ -452,7 +452,7 @@ struct EditorView: View {
                 .padding(.leading, 10)
                 .padding(.trailing, 4)
                 .frame(height: 32)
-                .slateGlassCapsule()
+                .qianNoteGlassCapsule()
                 .transition(.opacity.combined(with: .scale(scale: 0.92)))
             }
         }
@@ -593,7 +593,7 @@ struct EditorView: View {
                             .font(.system(size: 14, weight: .bold))
                             .foregroundStyle(Color.primary.opacity(0.75))
                             .frame(width: 40, height: 40)
-                            .slateGlassCapsule(interactive: true)
+                            .qianNoteGlassCapsule(interactive: true)
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("退出全屏")
@@ -649,7 +649,7 @@ struct EditorView: View {
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 9)
-                .slateGlassCapsule()
+                .qianNoteGlassCapsule()
                 .padding(.bottom, 14)
             }
         }
@@ -822,7 +822,7 @@ struct EditorView: View {
         }
         .padding(.horizontal, compact ? 10 : 14)
         .padding(.vertical, compact ? 6 : 8)
-        .slateGlassPanel(cornerRadius: 18, interactive: true)
+        .qianNoteGlassPanel(cornerRadius: 18, interactive: true)
         .padding(.horizontal, compact ? 8 : 14)
         .padding(.top, compact ? 6 : 8)
     }
@@ -879,7 +879,7 @@ struct EditorView: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
-        .slateGlassCapsule()
+        .qianNoteGlassCapsule()
     }
 
     // MARK: - 纸张选择
@@ -1121,7 +1121,7 @@ struct EditorView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
-        .slateGlassCapsule()
+        .qianNoteGlassCapsule()
         .allowsHitTesting(false)
     }
 }

@@ -2,7 +2,7 @@ import SwiftUI
 import UIKit
 
 @main
-struct SlateApp: App {
+struct QianNoteApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var store = NoteStore()
     @StateObject private var opener = DocumentOpenCoordinator()
@@ -13,7 +13,7 @@ struct SlateApp: App {
                 .environmentObject(store)
                 .environmentObject(opener)
                 .tint(Theme.accent)
-                // 「文件」→ 分享 → Slate、其它 app「用 Slate 打开」都会走到这里
+                // 「文件」→ 分享 → QianNote、其它 app「用 QianNote 打开」都会走到这里
                 .onOpenURL { url in
                     opener.open([url], store: store)
                 }
@@ -39,7 +39,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
                      performActionFor shortcutItem: UIApplicationShortcutItem,
                      completionHandler: @escaping (Bool) -> Void) {
         ShortcutInbox.put(shortcutItem.type)
-        NotificationCenter.default.post(name: .slateShortcutTriggered, object: nil)
+        NotificationCenter.default.post(name: .qianNoteShortcutTriggered, object: nil)
         completionHandler(true)
     }
 }

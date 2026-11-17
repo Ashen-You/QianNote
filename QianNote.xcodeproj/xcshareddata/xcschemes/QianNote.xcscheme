@@ -15,9 +15,9 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "783A812E902C4223B88BA481"
-               BuildableName = "Slate.app"
-               BlueprintName = "Slate"
-               ReferencedContainer = "container:Slate.xcodeproj">
+               BuildableName = "QianNote.app"
+               BlueprintName = "QianNote"
+               ReferencedContainer = "container:QianNote.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
       </BuildActionEntries>
@@ -45,9 +45,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "783A812E902C4223B88BA481"
-            BuildableName = "Slate.app"
-            BlueprintName = "Slate"
-            ReferencedContainer = "container:Slate.xcodeproj">
+            BuildableName = "QianNote.app"
+            BlueprintName = "QianNote"
+            ReferencedContainer = "container:QianNote.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </LaunchAction>
@@ -62,9 +62,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "783A812E902C4223B88BA481"
-            BuildableName = "Slate.app"
-            BlueprintName = "Slate"
-            ReferencedContainer = "container:Slate.xcodeproj">
+            BuildableName = "QianNote.app"
+            BlueprintName = "QianNote"
+            ReferencedContainer = "container:QianNote.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </ProfileAction>

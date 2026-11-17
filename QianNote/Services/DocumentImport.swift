@@ -60,7 +60,7 @@ final class DocumentImporter: NSObject {
         let renderer = UIGraphicsPDFRenderer(bounds: CGRect(origin: .zero, size: pageSize), format: format)
 
         let output = FileManager.default.temporaryDirectory
-            .appendingPathComponent("slate-import-\(UUID().uuidString).pdf")
+            .appendingPathComponent("qiannote-import-\(UUID().uuidString).pdf")
 
         try renderer.writePDF(to: output) { context in
             context.beginPage()
@@ -125,7 +125,7 @@ final class DocumentImporter: NSObject {
         }
 
         let output = FileManager.default.temporaryDirectory
-            .appendingPathComponent("slate-import-\(UUID().uuidString).pdf")
+            .appendingPathComponent("qiannote-import-\(UUID().uuidString).pdf")
         try data.write(to: output, options: .atomic)
 
         let pageCount = PDFDocument(data: data)?.pageCount ?? 0

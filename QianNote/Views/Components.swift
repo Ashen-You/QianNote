@@ -5,21 +5,21 @@ import UIKit
 
 extension View {
     /// 圆角浮层（工具栏 / 颜色面板 / 缩略图栏）
-    func slateGlassPanel(cornerRadius: CGFloat = 20,
+    func qianNoteGlassPanel(cornerRadius: CGFloat = 20,
                          tint: Color? = nil,
                          interactive: Bool = false) -> some View {
-        modifier(SlateGlassPanelModifier(cornerRadius: cornerRadius, tint: tint, interactive: interactive))
+        modifier(QianNoteGlassPanelModifier(cornerRadius: cornerRadius, tint: tint, interactive: interactive))
     }
 
     /// 胶囊浮层（顶栏 / 底栏 / 提示条）
-    func slateGlassCapsule(tint: Color? = nil, interactive: Bool = false) -> some View {
-        modifier(SlateGlassCapsuleModifier(tint: tint, interactive: interactive))
+    func qianNoteGlassCapsule(tint: Color? = nil, interactive: Bool = false) -> some View {
+        modifier(QianNoteGlassCapsuleModifier(tint: tint, interactive: interactive))
     }
 }
 
 /// iOS 26 起用系统的 Liquid Glass（`glassEffect`）：真实折射、随内容变化的边缘高光、
 /// 按压时会有形变。iOS 17–18 上退回「毛玻璃 + 细描边 + 阴影」，观感尽量靠拢。
-private struct SlateGlassPanelModifier: ViewModifier {
+private struct QianNoteGlassPanelModifier: ViewModifier {
     var cornerRadius: CGFloat
     var tint: Color?
     var interactive: Bool
@@ -46,7 +46,7 @@ private struct SlateGlassPanelModifier: ViewModifier {
     }
 }
 
-private struct SlateGlassCapsuleModifier: ViewModifier {
+private struct QianNoteGlassCapsuleModifier: ViewModifier {
     var tint: Color?
     var interactive: Bool
 
@@ -207,7 +207,7 @@ struct ErrorBanner: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 11)
-        .slateGlassPanel(cornerRadius: 14)
+        .qianNoteGlassPanel(cornerRadius: 14)
         .overlay(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .strokeBorder(Color.orange.opacity(0.35), lineWidth: 1)
@@ -283,7 +283,7 @@ struct AppIconPicker: View {
             }
             .frame(maxWidth: .infinity)
             .padding(12)
-            .slateGlassPanel(cornerRadius: Theme.cardCorner)
+            .qianNoteGlassPanel(cornerRadius: Theme.cardCorner)
         }
         .buttonStyle(.plain)
     }

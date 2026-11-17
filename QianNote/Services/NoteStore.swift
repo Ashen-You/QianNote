@@ -32,11 +32,11 @@ final class NoteStore: ObservableObject {
     private let rootURL: URL
     private let notesURL: URL
     private let indexURL: URL
-    private let ioQueue = DispatchQueue(label: "com.slate.store.io", qos: .utility)
+    private let ioQueue = DispatchQueue(label: "com.qiannote.store.io", qos: .utility)
     /// 缩略图渲染单独一条队列。
     /// 之前和落盘共用一条串行 ioQueue：书写时每 0.25 秒的保存都排在它前面，
     /// 缩略图那几十毫秒只能等着，表现就是「明明停了笔，缩略图还是不动」。
-    private let thumbnailQueue = DispatchQueue(label: "com.slate.store.thumbnail", qos: .userInitiated)
+    private let thumbnailQueue = DispatchQueue(label: "com.qiannote.store.thumbnail", qos: .userInitiated)
 
     // MARK: 缓存
 
@@ -79,7 +79,7 @@ final class NoteStore: ObservableObject {
     init() {
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
             ?? URL(fileURLWithPath: NSTemporaryDirectory())
-        rootURL = docs.appendingPathComponent("Slate", isDirectory: true)
+        rootURL = docs.appendingPathComponent("QianNote", isDirectory: true)
         notesURL = rootURL.appendingPathComponent("Notes", isDirectory: true)
         indexURL = rootURL.appendingPathComponent("index.json")
 

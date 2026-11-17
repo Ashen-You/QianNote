@@ -2,7 +2,7 @@
 
 一个用 **SwiftUI + PencilKit** 编写的 iPad 手写笔记应用，参考 Notability 的核心体验：手写、PDF 批注、录音同步、多页笔记、导出分享。当前版本 **v1.1.0**。
 
-工程名 / Bundle ID / 数据目录沿用内部标识 `Slate`（避免老笔记"消失"），App 对外显示名为 **Qian's Note**。工程**不含任何签名配置**，打开后选择你自己的开发者 Team 即可编译运行。
+工程名、Bundle ID、数据目录、类型名均已统一为 **QianNote**，App 显示名为 **Qian's Note**。工程**不含任何签名配置**，打开后选择你自己的开发者 Team 即可编译运行。
 
 ---
 
@@ -20,11 +20,11 @@
 
 ## 2. 打开 & 签名（三步）
 
-1. 双击 `Slate.xcodeproj` 打开工程。
-2. 左侧选中项目 **Slate** → `TARGETS: Slate` → **Signing & Capabilities**：
+1. 双击 `QianNote.xcodeproj` 打开工程。
+2. 左侧选中项目 **QianNote** → `TARGETS: QianNote` → **Signing & Capabilities**：
    - 勾选 **Automatically manage signing**
    - **Team** 选择你自己的 Apple ID / 开发者团队
-   - 如果提示 Bundle ID 冲突，把 `Bundle Identifier` 改成 `com.你的名字.slate`
+   - 如果提示 Bundle ID 冲突，把 `Bundle Identifier` 改成 `com.你的名字.qiannote`
 3. 顶部设备选择你的 iPad（或模拟器），按 `⌘R` 运行。
 
 > 免费 Apple ID 也能签名，但证书 7 天过期，到期重新 `⌘R` 一次即可；付费开发者账号为 1 年。
@@ -40,23 +40,23 @@
 
 工程里已经放好 `.github/workflows/build-ipa.yml`，会在 GitHub 的 macOS 机器上编译并打包成未签名 IPA。
 
-1. 新建一个 GitHub 仓库（public / private 都行），`git init` 后把 **本目录的内容**（保证 `Slate.xcodeproj` 在仓库根目录）推上去：
+1. 新建一个 GitHub 仓库（public / private 都行），`git init` 后把 **本目录的内容**（保证 `QianNote.xcodeproj` 在仓库根目录）推上去：
    ```bash
-   cd Slate
+   cd QianNote
    git init && git add . && git commit -m "init"
    git branch -M main
-   git remote add origin https://github.com/你的用户名/slate.git
+   git remote add origin https://github.com/你的用户名/qiannote.git
    git push -u origin main
    ```
 2. 打开仓库的 **Actions** 标签页 → 左侧 `Build unsigned IPA` → 右侧 `Run workflow`。
-3. 等 3～6 分钟，进入这次运行，页面底部 **Artifacts** 下载 `Slate-unsigned-ipa`，解压得到 `Slate-unsigned.ipa`。
+3. 等 3～6 分钟，进入这次运行，页面底部 **Artifacts** 下载 `QianNote-unsigned-ipa`，解压得到 `QianNote-unsigned.ipa`。
 
 > private 仓库的 macOS runner 按 10 倍计费，免费额度 2000 分钟/月 ≈ 能跑 30 多次；public 仓库完全免费。
 
 ### 路径 B：自己的 Mac 上一条命令
 
 ```bash
-bash Scripts/build_ipa.sh              # 产出 build/Slate-unsigned.ipa
+bash Scripts/build_ipa.sh              # 产出 build/QianNote-unsigned.ipa
 TEAM_ID=你的TeamID bash Scripts/build_ipa.sh --signed   # 用本机证书导出已签名 IPA
 ```
 
@@ -141,8 +141,8 @@ TEAM_ID=你的TeamID bash Scripts/build_ipa.sh --signed   # 用本机证书导�
 ## 5. 代码结构
 
 ```
-Slate/
-├── SlateApp.swift              App 入口
+QianNote/
+├── QianNoteApp.swift           App 入口
 ├── Models/
 │   ├── Note.swift              数据模型：Note / NotePage / TextBox / AudioMarker / Folder
 │   ├── PaperStyle.swift        纸张模板与底色（SwiftUI + UIKit 双份配色）
@@ -171,10 +171,10 @@ Slate/
 
 ## 6. 数据存放方式
 
-全部存在沙盒 `Documents/Slate/` 下，纯文件、无数据库：
+全部存在沙盒 `Documents/QianNote/` 下，纯文件、无数据库：
 
 ```
-Documents/Slate/
+Documents/QianNote/
 ├── index.json                     所有笔记与文件夹的元数据
 └── Notes/<笔记UUID>/
     ├── p_<页面UUID>.drawing       PKDrawing 二进制（每页一个）
@@ -224,10 +224,10 @@ Documents/Slate/
 ## 9. 改名 / 换图标
 
 - **App 显示名**（主屏下方文字，当前 `Qian's Note`）：`Signing & Capabilities` 同页的 `Display Name`，或改 `project.pbxproj` 两处 `INFOPLIST_KEY_CFBundleDisplayName`（Debug / Release 都要改）。代码里的用户可见文案（欢迎笔记标题、导出默认名、权限提示等）也要一起改，散落在 `NoteStore.swift`、`AudioViews.swift`、`DocumentImport.swift`、`DocumentOpenCoordinator.swift`。
-- **刻意不改的内部标识**：`PRODUCT_BUNDLE_IDENTIFIER = com.example.slate`、数据目录 `Documents/Slate/`、`SlateApp` / `SlateGlass*` 类型名。改包 ID 或目录会让老笔记"消失"，类型名是内部标识符、改了没有用户可见收益。
-- **主图标**：替换 `Slate/Assets.xcassets/AppIcon.appiconset/AppIcon.png`（1024×1024，无圆角、满幅）。
+- **内部标识**（均已统一为 QianNote）：`PRODUCT_BUNDLE_IDENTIFIER = com.example.qiannote`、数据目录 `Documents/QianNote/`、`QianNoteApp` / `QianNoteGlass*` 类型名。
+- **主图标**：替换 `QianNote/Assets.xcassets/AppIcon.appiconset/AppIcon.png`（1024×1024，无圆角、满幅）。
 - **加一套备用图标**（运行时可切换，v1.1.0 起已有 `AppIconAI`）：
-  1. 新建 `Slate/Assets.xcassets/<名字>.appiconset`，放入 1024×1024 满幅 png + 对应 `Contents.json`；
+  1. 新建 `QianNote/Assets.xcassets/<名字>.appiconset`，放入 1024×1024 满幅 png + 对应 `Contents.json`；
   2. 在 `project.pbxproj` **两处** buildSettings 加 `ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES = <名字>;`；
   3. 在 `Extensions.swift` 的 `AppIconChoice`、`Components.swift` 的 `AppIconPicker` 里加对应项与缩略图。
   **不要**在 `Info.plist` 手写 `CFBundleIcons / CFBundleAlternateIcons / CFBundleIconFiles`——那样要求包里真有同名 png，否则 `setAlternateIconName` 会"成功"但系统找不到图，主屏变白底网格占位图。正确做法是由 `actool` 依据构建设置把 `CFBundleAlternateIcons` 写进产物 plist。
