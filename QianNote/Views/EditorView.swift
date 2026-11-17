@@ -471,7 +471,10 @@ struct EditorView: View {
                                 }
                         }
                     }
-                    .padding(.vertical, 16)
+                    // 沉浸全屏下 workspace 顶部 padding 归零，页面会滚到状态栏下面；
+                    // 这里把顶部安全区补回来，让第一页顶部始终停在状态栏之下。
+                    .padding(.top, immersive ? geo.safeAreaInsets.top : 16)
+                    .padding(.bottom, immersive ? max(geo.safeAreaInsets.bottom, 16) : 16)
                 }
                 .onChange(of: pageIndex) { _, newValue in
                     // 点右侧缩略图 / 底栏翻页按钮时，滚动到对应页
@@ -664,8 +667,13 @@ struct EditorView: View {
                         Image(systemName: "arrow.down.right.and.arrow.up.left")
                             .font(.system(size: 14, weight: .bold))
                             .foregroundStyle(Color.primary.opacity(0.75))
-                            .frame(width: 40, height: 40)
-                            .qianNoteGlassCapsule(interactive: true)
+                            .frame(width: 44, height: 44)
+                            .contentShape(Rectangle())
+                            // 退出按钮必须用明确的背景材质：iOS 26 的 interactive glass
+                            // 叠在全屏 ScrollView 上时 hit-test 可能失效，导致「收不回去」。
+                            .background(.ultraThinMaterial, in: Circle())
+                            .overlay(Circle().strokeBorder(Color.primary.opacity(0.08), lineWidth: 1))
+                            .shadow(color: Color.black.opacity(0.10), radius: 10, x: 0, y: 4)
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("退出全屏")
