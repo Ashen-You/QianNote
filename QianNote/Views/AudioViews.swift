@@ -175,6 +175,14 @@ struct AudioPanelView: View {
                 .foregroundStyle(.secondary)
                 .frame(width: 40)
 
+            // 有逐笔时间轴时告诉用户「画面会跟着录音复现」，否则会以为笔迹在自己消失
+            if !compact, store.hasInkTimeline(noteID: noteID) {
+                Label("逐笔回放", systemImage: "scribble.variable")
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(Theme.accent)
+                    .lineLimit(1)
+            }
+
             Button {
                 audio.stop()
             } label: {

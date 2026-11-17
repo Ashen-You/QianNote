@@ -21,6 +21,8 @@ struct NotePageView: View {
     var onPenMove: ((CGPoint) -> Void)? = nil
     /// 一笔画完（参数为当前页累计笔画数），用于录音时间轴
     var onStrokeCommitted: ((Int) -> Void)? = nil
+    /// 录音回放：只显示前 N 笔（nil = 全部）
+    var replayMaxStrokes: Int? = nil
     /// 两指点击撤销 / 三指点击重做
     var onUndoTap: (() -> Void)? = nil
     var onRedoTap: (() -> Void)? = nil
@@ -126,6 +128,7 @@ struct NotePageView: View {
                           isDashed: tools.activeTool.isDashed,
                           dashWidth: tools.width(for: .dashed),
                           onStrokeCommitted: onStrokeCommitted,
+                          replayMaxStrokes: replayMaxStrokes,
                           onUndoTap: onUndoTap,
                           onRedoTap: onRedoTap,
                           fingerPans: fingerCanPan,

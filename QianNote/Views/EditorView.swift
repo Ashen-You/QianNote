@@ -15,7 +15,9 @@ struct EditorView: View {
 
     @StateObject private var tools = ToolStore()
     @StateObject private var controllers = CanvasControllerPool()
-    @State private var audio = AudioController()
+    /// 必须用 @StateObject：回放时 replayMax 要跟着 audio.time 走，
+    /// @State 不会订阅 @Published，笔迹就永远停在回放开始的那一笔。
+    @StateObject private var audio = AudioController()
     @State private var pageIndex = 0
     @State private var showPagePanel = true
     @State private var showRename = false
@@ -74,6 +76,24 @@ struct EditorView: View {
     private var note: Note? { store.note(id: noteID) }
 
     private var compact: Bool { sizeClass == .compact }
+
+    // MARK: - 录音时间轴（逐笔回放）
+
+    /// 抬笔时给这一笔打上录音时间戳。只在真正录音时记账，
+    /// 否则 inkStampBuffer 会被凭空创建、又永远不 flush。
+    private func stampStroke(pageID: UUID, strokeCount: Int) {
+        guard audio.mode == .recording, !audio.isPaused else { return }
+        store.addInkStamp(noteID: noteID,
+                          pageID: pageID,
+                          time: audio.liveTime,
+                          strokeCount: strokeCount)
+    }
+
+    /// 回放到当前时刻，这一页应该显示多少笔。nil 表示不裁剪（正常显示全部）。
+    private func replayMax(for pageID: UUID) -> Int? {
+        guard audio.mode == .playing else { return nil }
+        return store.replayStrokeCount(noteID: noteID, pageID: pageID, time: audio.time)
+    }
 
     var body: some View {
         ZStack {
@@ -405,6 +425,10 @@ struct EditorView: View {
                          onPenMove: { point in
                              followPen(point, pageSize: note.pageSize, fit: fit, viewport: geo.size)
                          },
+                         onStrokeCommitted: { count in
+                             stampStroke(pageID: currentPageID(note), strokeCount: count)
+                         },
+                         replayMaxStrokes: replayMax(for: currentPageID(note)),
                          onUndoTap: { gestureUndo(currentPageID(note)) },
                          onRedoTap: { gestureRedo(currentPageID(note)) },
                          onFingerPan: { delta in
@@ -553,7 +577,10 @@ struct EditorView: View {
                      },
                      shapeRecognition: tools.shapeRecognition,
                      onPenMove: { _ in },
-                     onStrokeCommitted: nil,
+                     onStrokeCommitted: { count in
+                         stampStroke(pageID: page.id, strokeCount: count)
+                     },
+                     replayMaxStrokes: replayMax(for: page.id),
                      onUndoTap: { gestureUndo(page.id) },
                      onRedoTap: { gestureRedo(page.id) },
                      onFingerPan: { delta in

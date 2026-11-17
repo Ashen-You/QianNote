@@ -15,6 +15,11 @@ struct LibraryView: View {
     @State private var showImporter = false
     @State private var showIconPicker = false
     @State private var showAbout = false
+    /// 备份：选一个目录，把整个资料库拷进去
+    @State private var showBackupPicker = false
+    /// 恢复：选一个备份目录，把笔记合并回来
+    @State private var showRestorePicker = false
+    @State private var backupMessage: String?
     @StateObject private var iconManager = AppIconManager()
 
     @State private var prompt: LibraryPrompt?
@@ -85,7 +90,11 @@ struct LibraryView: View {
                 }
             }
             .navigationTitle("笔记")
-            .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .always), prompt: "搜索笔记标题")
+            .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .always), prompt: "搜索标题或手写内容")
+            .task {
+                // 后台补手写索引：只算缺失 / 过期的页，算过的不会重来
+                await store.indexHandwritingIfNeeded()
+            }
             .toolbar {
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     Button {
@@ -118,6 +127,11 @@ struct LibraryView: View {
                           allowsMultipleSelection: true) { result in
                 handleImport(result)
             }
+            .modifier(LibraryBackupModifier(showBackupPicker: $showBackupPicker,
+                                            showRestorePicker: $showRestorePicker,
+                                            message: $backupMessage,
+                                            onBackup: handleBackup,
+                                            onRestore: handleRestore))
             .alert(prompt?.title ?? "", isPresented: promptBinding) {
                 TextField("名称", text: $promptText)
                 Button("取消", role: .cancel) { prompt = nil }
@@ -203,6 +217,17 @@ struct LibraryView: View {
             } label: {
                 Label("新建文件夹", systemImage: "folder.badge.plus")
             }
+            Divider()
+            Button {
+                showBackupPicker = true
+            } label: {
+                Label("备份到文件夹…", systemImage: "arrow.up.doc.on.clipboard")
+            }
+            Button {
+                showRestorePicker = true
+            } label: {
+                Label("从备份恢复…", systemImage: "arrow.down.doc.on.clipboard")
+            }
         } label: {
             Image(systemName: "plus")
                 .font(.headline)
@@ -260,7 +285,8 @@ struct LibraryView: View {
         if favoritesOnly { result = result.filter(\.isFavorite) }
         if let selectedFolder { result = result.filter { $0.folderID == selectedFolder } }
         if !searchText.isEmpty {
-            result = result.filter { $0.title.localizedCaseInsensitiveContains(searchText) }
+            // 标题 + 手写 OCR + 文字框，三处任意命中即算匹配
+            result = result.filter { store.matches($0, query: searchText) }
         }
         switch sortOption {
         case .updated: result.sort { $0.updatedAt > $1.updatedAt }
@@ -367,6 +393,47 @@ struct LibraryView: View {
         }
     }
 
+    // MARK: - 资料库备份 / 恢复
+
+    private func handleBackup(_ result: Result<[URL], Error>) {
+        switch result {
+        case .success(let urls):
+            guard let folder = urls.first else { return }
+            let accessing = folder.startAccessingSecurityScopedResource()
+            defer { if accessing { folder.stopAccessingSecurityScopedResource() } }
+            do {
+                let created = try store.backupLibrary(to: folder)
+                let count = store.notes.count
+                backupMessage = "已备份 \(count) 篇笔记\n\(created.lastPathComponent)"
+            } catch {
+                store.errorMessage = "备份失败：\(error.localizedDescription)"
+            }
+        case .failure(let error):
+            store.errorMessage = error.localizedDescription
+        }
+    }
+
+    private func handleRestore(_ result: Result<[URL], Error>) {
+        switch result {
+        case .success(let urls):
+            guard let folder = urls.first else { return }
+            let accessing = folder.startAccessingSecurityScopedResource()
+            defer { if accessing { folder.stopAccessingSecurityScopedResource() } }
+            do {
+                let restored = try store.restoreLibrary(from: folder)
+                if restored > 0 {
+                    backupMessage = "已恢复 \(restored) 篇笔记"
+                } else {
+                    backupMessage = "这个备份里的笔记都不比本地新，没有需要恢复的内容。"
+                }
+            } catch {
+                store.errorMessage = "恢复失败：\(error.localizedDescription)"
+            }
+        case .failure(let error):
+            store.errorMessage = error.localizedDescription
+        }
+    }
+
     /// PDF 直接用；Word / RTF / HTML / 图片先转成 PDF，再走同一条导入管线
     private func importFile(_ url: URL) {
         Task { @MainActor in
@@ -419,5 +486,30 @@ struct LibraryView: View {
         } label: {
             Label("删除", systemImage: "trash")
         }
+    }
+}
+
+// MARK: - 备份 / 恢复的界面装配
+
+/// 单独抽出来，避免 LibraryView 的 body 表达式过长导致 Swift 类型检查超时。
+private struct LibraryBackupModifier: ViewModifier {
+    @Binding var showBackupPicker: Bool
+    @Binding var showRestorePicker: Bool
+    @Binding var message: String?
+    let onBackup: (Result<[URL], Error>) -> Void
+    let onRestore: (Result<[URL], Error>) -> Void
+
+    func body(content: Content) -> some View {
+        content
+            .fileImporter(isPresented: $showBackupPicker,
+                          allowedContentTypes: [.folder]) { result in onBackup(result.map { [$0] }) }
+            .fileImporter(isPresented: $showRestorePicker,
+                          allowedContentTypes: [.folder]) { result in onRestore(result.map { [$0] }) }
+            .alert("备份", isPresented: Binding(get: { message != nil },
+                                              set: { if !$0 { message = nil } })) {
+                Button("好", role: .cancel) { message = nil }
+            } message: {
+                Text(message ?? "")
+            }
     }
 }

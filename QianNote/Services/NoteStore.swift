@@ -76,10 +76,13 @@ final class NoteStore: ObservableObject {
 
     // MARK: - 初始化
 
-    init() {
+    /// - Parameter rootFolderName: 存储根目录名。
+    ///   单元测试必须传一个独立名字 —— 测试宿主的沙盒和 App 是同一个，
+    ///   用默认值会让测试里的 `delete` 直接清掉用户真实笔记。
+    init(rootFolderName: String = "QianNote") {
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
             ?? URL(fileURLWithPath: NSTemporaryDirectory())
-        rootURL = docs.appendingPathComponent("QianNote", isDirectory: true)
+        rootURL = docs.appendingPathComponent(rootFolderName, isDirectory: true)
         notesURL = rootURL.appendingPathComponent("Notes", isDirectory: true)
         indexURL = rootURL.appendingPathComponent("index.json")
 
@@ -90,6 +93,11 @@ final class NoteStore: ObservableObject {
 
         try? FileManager.default.createDirectory(at: notesURL, withIntermediateDirectories: true)
         load()
+    }
+
+    /// 仅供测试：把整个存储目录删掉，避免模拟器沙盒里堆一堆测试残留
+    func destroyStorageForTesting() {
+        try? fm.removeItem(at: rootURL)
     }
 
     // MARK: - 读写索引
@@ -849,6 +857,162 @@ final class NoteStore: ObservableObject {
         }
     }
 
+    // MARK: - 手写 OCR 索引
+
+    /// 索引是否正在跑（列表底部的进度提示用）
+    @Published private(set) var isIndexingHandwriting = false
+
+    /// 补全手写索引：只处理「没识别过」或「墨迹变了」的页。
+    ///
+    /// 用笔画数当版本号：手写只增不减时笔画数一变就说明内容变了，需要重识别。
+    /// 串行执行 —— 同时开多个 Vision 请求会把 CPU 吃满，反而更慢。
+    func indexHandwritingIfNeeded(maxPages: Int = 40) async {
+        guard !isIndexingHandwriting else { return }
+
+        var jobs: [(noteID: UUID, pageID: UUID, drawing: PKDrawing, pageSize: CGSize)] = []
+        for note in notes {
+            for page in note.pages {
+                if jobs.count >= maxPages { break }
+
+                let drawing = drawing(noteID: note.id, pageID: page.id)
+                let strokeCount = drawing.strokes.count
+                // 空页没有可识别内容：直接跳过，不必写入标记
+                if strokeCount == 0 { continue }
+                // 已经索引过且墨迹没变
+                if page.ocrText != nil, page.ocrBaseline == strokeCount { continue }
+
+                jobs.append((note.id, page.id, drawing, note.pageSize))
+            }
+            if jobs.count >= maxPages { break }
+        }
+
+        guard !jobs.isEmpty else { return }
+        isIndexingHandwriting = true
+        defer { isIndexingHandwriting = false }
+
+        for job in jobs {
+            if Task.isCancelled { return }
+            let text = await HandwritingOCR.recognize(drawing: job.drawing, pageSize: job.pageSize)
+            let strokeCount = job.drawing.strokes.count
+            update(job.noteID) { note in
+                guard let index = note.pages.firstIndex(where: { $0.id == job.pageID }) else { return }
+                note.pages[index].ocrText = text
+                note.pages[index].ocrBaseline = strokeCount
+            }
+            // 每页之间让一下主线程，避免边索引边写字时掉帧
+            await Task.yield()
+        }
+        // 一轮结束立刻落盘，别等防抖
+        saveNow()
+    }
+
+    /// 笔记是否命中搜索：标题命中，或任一页的手写 OCR 命中。
+    func matches(_ note: Note, query: String) -> Bool {
+        if note.title.localizedCaseInsensitiveContains(query) { return true }
+        guard let normalized = HandwritingOCR.normalize(query), !normalized.isEmpty else { return false }
+        if note.pages.contains(where: { ($0.ocrText ?? "").contains(normalized) }) { return true }
+        // 文字框内容也算"笔记里写的字"
+        return note.pages.contains { page in
+            page.textBoxes.contains {
+                HandwritingOCR.normalize($0.text)?.contains(normalized) ?? false
+            }
+        }
+    }
+
+    // MARK: - 资料库备份 / 恢复
+    //
+    // 说明：真正的 iCloud 自动同步要在 App ID 上启用 iCloud 能力、配 ubiquity container，
+    // 这需要付费开发者账号重新签名。这里给的是一套不依赖 entitlements 的等价能力：
+    // 把整个资料库拷进用户自己挑的目录（通常是「文件」App 里的 iCloud 云盘），
+    // 另一台设备再从同一目录恢复。
+    // 代价是手动点一次，好处是任何账号都能用，产物是可见、可拷走的普通文件夹。
+
+    /// 把整个资料库备份到指定父目录，返回实际创建的备份目录。
+    @discardableResult
+    func backupLibrary(to parent: URL) throws -> URL {
+        // saveDrawing / saveNow 都排在串行 ioQueue 上。先把队列跑空，
+        // 否则拷到的是上一版墨迹，甚至文件都还没创建出来。
+        ioQueue.sync { }
+
+        // 同理：索引也直接同步编码一份写进备份目录，不依赖磁盘上 index.json 的当前状态
+        let index = LibraryIndex(notes: notes, folders: folders)
+        let data = try Self.encoder.encode(index)
+
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyyMMdd-HHmmss"
+        let name = "QianNote-Backup-\(formatter.string(from: Date()))"
+        let destination = parent.appendingPathComponent(name, isDirectory: true)
+        try fm.createDirectory(at: destination, withIntermediateDirectories: true)
+
+        try data.write(to: destination.appendingPathComponent("index.json"), options: .atomic)
+
+        if fm.fileExists(atPath: notesURL.path) {
+            try fm.copyItem(at: notesURL, to: destination.appendingPathComponent("Notes", isDirectory: true))
+        }
+        return destination
+    }
+
+    /// 从备份目录恢复，按笔记 ID 合并：本地没有就新增，本地有且备份更新才覆盖。
+    /// 返回实际恢复的笔记数。
+    @discardableResult
+    func restoreLibrary(from source: URL) throws -> Int {
+        let backupIndexURL = source.appendingPathComponent("index.json")
+        guard let data = try? Data(contentsOf: backupIndexURL),
+              let backup = try? Self.decoder.decode(LibraryIndex.self, from: data) else {
+            throw BackupError.invalidArchive
+        }
+
+        var restored = 0
+        for note in backup.notes {
+            // 本地这份不比备份旧，就没必要覆盖用户可能刚写的内容
+            if let existing = self.note(id: note.id), existing.updatedAt >= note.updatedAt {
+                continue
+            }
+            copyNoteFolder(noteID: note.id, from: source)
+            notes.removeAll { $0.id == note.id }
+            notes.insert(note, at: 0)
+
+            // 缓存里可能还留着旧墨迹 / 缩略图，不清会读到覆盖前的内容
+            for page in note.pages {
+                drawingCache[page.id] = nil
+            }
+            pdfDocuments[note.id] = nil
+            restored += 1
+        }
+
+        // 文件夹独立于笔记恢复：备份里可能只有文件夹变了（比如新建了空文件夹）
+        var didChange = restored > 0
+        for folder in backup.folders where !folders.contains(where: { $0.id == folder.id }) {
+            folders.append(folder)
+            didChange = true
+        }
+
+        if didChange {
+            thumbnailCache.removeAllObjects()
+            saveNow()
+        }
+        return restored
+    }
+
+    private func copyNoteFolder(noteID: UUID, from backupRoot: URL) {
+        let source = backupRoot
+            .appendingPathComponent("Notes", isDirectory: true)
+            .appendingPathComponent(noteID.uuidString, isDirectory: true)
+        guard fm.fileExists(atPath: source.path) else { return }
+
+        let destination = noteFolder(noteID)
+        if !fm.fileExists(atPath: destination.path) {
+            try? fm.createDirectory(at: destination, withIntermediateDirectories: true)
+        }
+        // 逐文件覆盖而不是「删目录再整拷」：中途失败至少不会把已有数据全丢掉
+        let files = (try? fm.contentsOfDirectory(at: source, includingPropertiesForKeys: nil)) ?? []
+        for file in files {
+            let target = destination.appendingPathComponent(file.lastPathComponent)
+            try? fm.removeItem(at: target)
+            try? fm.copyItem(at: file, to: target)
+        }
+    }
+
     // MARK: - 路径
 
     func noteFolder(_ noteID: UUID) -> URL {
@@ -884,6 +1048,18 @@ final class NoteStore: ObservableObject {
 }
 
 // MARK: - 首次启动的示例内容
+
+/// 资料库备份 / 恢复可能出现的错误
+enum BackupError: LocalizedError {
+    case invalidArchive
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidArchive:
+            return "这个文件夹不是 QianNote 的备份（缺少或无法解析 index.json）"
+        }
+    }
+}
 
 private enum WelcomeContent {
     static let textBoxes: [TextBox] = [
