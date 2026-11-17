@@ -41,6 +41,11 @@ struct EditorView: View {
     @State private var pan: CGSize = .zero
     /// 纯手拖：1× 时上下拖动累积的位移，用来翻页
     @State private var swipeAccum: CGFloat = 0
+    /// 多页纵向连续滚动（衔接滚动）：所有页在一个纵向列表里无缝排布。
+    /// 默认开启；关闭时回到单页视图（可缩放、上下拖动翻页）。
+    @State private var continuous = true
+    /// 程序跳页（点缩略图/底栏）时置位，避免滚动到位的 onAppear 再反过来触发 scrollTo 形成回环
+    @State private var isProgrammaticScroll = false
 
     enum EditorSheet: Identifiable {
         case share(URL)
@@ -157,7 +162,13 @@ struct EditorView: View {
 
     private func workspace(_ note: Note) -> some View {
         HStack(spacing: 0) {
-            pageArea(note)
+            Group {
+                if continuous && note.pages.count > 1 {
+                    continuousArea(note)
+                } else {
+                    pageArea(note)
+                }
+            }
             // 面板打开时，页面压一层轻遮罩：视觉上退到下一层，且不吃触摸（Pencil 照常书写）
             .overlay { paletteScrim }
 
@@ -415,6 +426,67 @@ struct EditorView: View {
     private func currentPageID(_ note: Note) -> UUID {
         if let page = note.pages[safe: pageIndex] { return page.id }
         return note.pages.first?.id ?? note.id
+    }
+
+    // MARK: - 连续滚动（衔接滚动）
+
+    /// 多页纵向连续滚动：所有页在一个纵向 ScrollView 里无缝排布。
+    /// 手指上下滑动连续翻页（看 PDF 的体验），Pencil 照常在各页画布上书写。
+    /// 每页一个独立的撤销栈（CanvasControllerPool 已按页隔离）。
+    private func continuousArea(_ note: Note) -> some View {
+        GeometryReader { geo in
+            let inset: CGFloat = immersive ? 0 : (compact ? 8 : 24)
+            let width = max(geo.size.width - inset * 2, 1)
+            let pageWidth = CGFloat(max(note.pageWidth, 1))
+            let pageHeight = CGFloat(max(note.pageHeight, 1))
+            let scale = width / max(pageWidth, 1)
+            let renderedHeight = pageHeight * scale
+
+            ScrollViewReader { proxy in
+                ScrollView(.vertical, showsIndicators: false) {
+                    LazyVStack(spacing: immersive ? 8 : 18) {
+                        ForEach(Array(note.pages.enumerated()), id: \.element.id) { index, page in
+                            NotePageView(note: note,
+                                         pageIndex: index,
+                                         tools: tools,
+                                         controller: controllers.controller(for: page.id),
+                                         pdfScale: 2.5,
+                                         shapeRecognition: tools.shapeRecognition,
+                                         onUndoTap: { gestureUndo(page.id) },
+                                         onRedoTap: { gestureRedo(page.id) })
+                                .frame(width: pageWidth, height: pageHeight)
+                                .scaleEffect(scale, anchor: .top)
+                                .frame(width: width, height: renderedHeight)
+                                .background(Color.white)
+                                .shadow(color: Color.black.opacity(immersive ? 0 : 0.12),
+                                        radius: immersive ? 0 : 12, x: 0, y: 4)
+                                .padding(.horizontal, inset)
+                                .id(index)
+                                .onAppear {
+                                    // 滚动到某页时同步页码（底栏页码 / 缩略图高亮 / 录音时间轴跟随）
+                                    if pageIndex != index {
+                                        pageIndex = index
+                                    }
+                                    controllers.activate(page.id)
+                                }
+                        }
+                    }
+                    .padding(.vertical, 16)
+                }
+                .onChange(of: pageIndex) { _, newValue in
+                    // 点右侧缩略图 / 底栏翻页按钮时，滚动到对应页
+                    guard !isProgrammaticScroll else { return }
+                    isProgrammaticScroll = true
+                    withAnimation(.easeInOut(duration: 0.25)) {
+                        proxy.scrollTo(newValue, anchor: .center)
+                    }
+                    // 滚动动画结束后放开，让后续滚动重新驱动页码同步
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        isProgrammaticScroll = false
+                    }
+                }
+            }
+        }
     }
 
     // MARK: - 缩放平移
@@ -794,6 +866,11 @@ struct EditorView: View {
                     }
                 }
                 Divider()
+                if note?.pages.count ?? 0 > 1 {
+                    Toggle(isOn: $continuous) {
+                        Label("连续滚动", systemImage: "rectangle.stack")
+                    }
+                }
                 Toggle(isOn: Binding(get: { !tools.fingerDrawing },
                                      set: { tools.fingerDrawing = !$0 })) {
                     Label("拖动模式（不写字）", systemImage: "hand.point.up.left")
