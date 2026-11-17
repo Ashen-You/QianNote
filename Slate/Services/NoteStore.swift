@@ -44,6 +44,10 @@ final class NoteStore: ObservableObject {
     private var thumbnailWork: [UUID: DispatchWorkItem] = [:]
     private var lastUpdateBump: [UUID: Date] = [:]
 
+    /// 墨迹落盘的「代」计数：只让最新的快照落盘，中间版本直接跳过
+    private let drawingLock = NSLock()
+    private var drawingGeneration: [UUID: Int] = [:]
+
     private static let encoder: JSONEncoder = {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
@@ -348,11 +352,26 @@ final class NoteStore: ObservableObject {
 
     func saveDrawing(_ drawing: PKDrawing, noteID: UUID, pageID: UUID) {
         drawingCache[pageID] = drawing
-        let data = drawing.dataRepresentation()
         let url = drawingURL(noteID: noteID, pageID: pageID)
         let folder = noteFolder(noteID)
 
-        ioQueue.async {
+        // dataRepresentation() 是毫秒级到几十毫秒的开销。书写过程中这里每 0.25 秒跑一次，
+        // 等于每隔几帧就卡住主线程，PencilKit 的笔迹就断在半路（「写到一半被截断」）。
+        // PKDrawing 是值类型，拍照成本极低，编码和写盘都挪到 ioQueue 去做。
+        drawingLock.lock()
+        let generation = (drawingGeneration[pageID] ?? 0) + 1
+        drawingGeneration[pageID] = generation
+        drawingLock.unlock()
+
+        ioQueue.async { [weak self] in
+            guard let self else { return }
+            self.drawingLock.lock()
+            let latest = self.drawingGeneration[pageID] ?? 0
+            self.drawingLock.unlock()
+            // 队列里已经排着更新的快照，这一版没有落盘价值
+            guard generation == latest else { return }
+
+            let data = drawing.dataRepresentation()
             try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             try? data.write(to: url, options: .atomic)
         }
@@ -387,25 +406,42 @@ final class NoteStore: ObservableObject {
         guard let note = note(id: noteID),
               let pageIndex = note.pages.firstIndex(where: { $0.id == pageID }) else { return }
 
-        let image = PageRenderer.renderPage(note: note,
-                                            pageIndex: pageIndex,
-                                            drawing: drawing(noteID: noteID, pageID: pageID),
-                                            pdf: pdfDocument(for: noteID),
-                                            maxWidth: 520,
-                                            imageLoader: { [weak self] name in
-                                                self?.image(noteID: noteID, fileName: name)
-                                            })
-        thumbnailCache.setObject(image, forKey: pageID.uuidString as NSString)
-
-        let data = image.pngData()
-        let url = thumbnailURL(noteID: noteID, pageID: pageID)
-        ioQueue.async {
-            if let data { try? data.write(to: url, options: .atomic) }
+        let drawing = drawing(noteID: noteID, pageID: pageID)
+        let pdf = pdfDocument(for: noteID)
+        // 图片资源先在主线程取（走内存缓存），渲染本身必须离开主线程：
+        // 整页「纸张 + PDF + 墨迹」合成实测要 1.5 秒，放在主线程等于每写一会儿就冻住一次，
+        // PencilKit 收不到触摸点，笔迹就断在半路。
+        var images: [String: UIImage] = [:]
+        for item in note.pages[safe: pageIndex]?.images ?? [] {
+            if let image = image(noteID: noteID, fileName: item.fileName) {
+                images[item.fileName] = image
+            }
         }
-        thumbnailRevision += 1
+        let url = thumbnailURL(noteID: noteID, pageID: pageID)
+
+        ioQueue.async { [weak self] in
+            // 缩略图最宽 520pt，墨迹按 1 倍栅格化即可（原来固定 2 倍，白算 4 倍像素）
+            let rendered = PageRenderer.renderPage(note: note,
+                                                   pageIndex: pageIndex,
+                                                   drawing: drawing,
+                                                   pdf: pdf,
+                                                   maxWidth: 520,
+                                                   inkScale: 1,
+                                                   imageLoader: { images[$0] })
+            let data = rendered.pngData()
+            if let data {
+                try? data.write(to: url, options: .atomic)
+            }
+            Task { @MainActor in
+                self?.thumbnailCache.setObject(rendered, forKey: pageID.uuidString as NSString)
+                self?.thumbnailRevision += 1
+            }
+        }
     }
 
-    /// 返回缩略图，必要时即时生成
+    /// 返回缩略图：只读内存缓存 / 磁盘，**不同步渲染**。
+    /// 这个函数是在 SwiftUI body 里被调用的，同步渲染整页实测要 1.5 秒，
+    /// 会直接把书写和滚动卡死；没有现成图片时丢给后台补一张，这次先返回 nil。
     func ensureThumbnail(noteID: UUID, pageID: UUID?) -> UIImage? {
         guard let pageID else { return nil }
 
@@ -417,24 +453,8 @@ final class NoteStore: ObservableObject {
             thumbnailCache.setObject(image, forKey: pageID.uuidString as NSString)
             return image
         }
-        guard let note = note(id: noteID),
-              let pageIndex = note.pages.firstIndex(where: { $0.id == pageID }) else { return nil }
-
-        let image = PageRenderer.renderPage(note: note,
-                                            pageIndex: pageIndex,
-                                            drawing: drawing(noteID: noteID, pageID: pageID),
-                                            pdf: pdfDocument(for: noteID),
-                                            maxWidth: 520,
-                                            imageLoader: { [weak self] name in
-                                                self?.image(noteID: noteID, fileName: name)
-                                            })
-        thumbnailCache.setObject(image, forKey: pageID.uuidString as NSString)
-
-        let data = image.pngData()
-        ioQueue.async {
-            if let data { try? data.write(to: url, options: .atomic) }
-        }
-        return image
+        scheduleThumbnail(noteID: noteID, pageID: pageID)
+        return nil
     }
 
     func invalidateThumbnail(pageID: UUID) {

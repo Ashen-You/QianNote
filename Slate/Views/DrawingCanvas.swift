@@ -168,9 +168,27 @@ final class TrackingCanvasView: PKCanvasView {
 
     private var didReportMultiTouch = false
 
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        pinViewport()
+    }
+
+    /// PKCanvasView 是 UIScrollView：墨迹画出原本边界后它会自己撑大 contentSize，
+    /// contentOffset 一旦不是 0，整个墨迹层就会相对页面平移——纸张是 SwiftUI 画的、
+    /// 墨迹是 UIKit 画的，两者错位后看起来就是「笔迹被一条竖线切掉了」。
+    /// 关掉滚动时把视口钉死在 bounds 上，保证墨迹坐标和页面坐标永远一致。
+    func pinViewport() {
+        guard !isScrollEnabled else { return }
+        if contentSize != bounds.size { contentSize = bounds.size }
+        if contentOffset != .zero { contentOffset = .zero }
+    }
+
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
-        let total = max(touches.count, event?.allTouches?.count ?? 0)
-        if total >= 2, !didReportMultiTouch {
+        // 只数手指：拿 Pencil 写的时候手掌/手指常压在上面，
+        // 把 Pencil 也数进去会误判成「两指手势」，进而在抬笔时误撤销。
+        let directCount = max(touches.filter { $0.type == .direct }.count,
+                              (event?.allTouches ?? []).filter { $0.type == .direct }.count)
+        if directCount >= 2, !didReportMultiTouch {
             didReportMultiTouch = true
             onMultiTouchDown?()
         }
@@ -290,10 +308,12 @@ struct DrawingCanvas: UIViewRepresentable {
         coordinator.canvas = canvas
 
         if coordinator.currentPageID != pageID {
+            // 换页前先把当前墨迹落盘。之前这里直接换成新页的 drawing 且 notify=false，
+            // 旧页最后 0.25 秒的笔迹既没保存、也没留在画布上，表现就是「写好的字少一截」。
+            coordinator.flushCurrentDrawing()
             coordinator.currentPageID = pageID
             coordinator.toolKey = toolKey
             coordinator.cancelPendingSnap()
-            coordinator.cancelPendingSave()
             controller.currentDrawing = initialDrawing
             controller.resetHistory()
             coordinator.applyProgrammatic(initialDrawing, notify: false)
@@ -321,6 +341,13 @@ struct DrawingCanvas: UIViewRepresentable {
         coordinator.fingerPan?.isEnabled = fingerPans
     }
 
+    static func dismantleUIView(_ canvas: PKCanvasView, coordinator: Coordinator) {
+        // 画布被回收（换页、切连续滚动、视图重建）时把最后一笔落盘，
+        // 否则最后 0.25 秒的墨迹会凭空消失，看起来就像「写到一半被截断」
+        coordinator.cancelPendingSnap()
+        coordinator.flushCurrentDrawing()
+    }
+
     final class Coordinator: NSObject, PKCanvasViewDelegate, UIGestureRecognizerDelegate, UIPencilInteractionDelegate {
         var parent: DrawingCanvas
         weak var canvas: PKCanvasView?
@@ -334,6 +361,8 @@ struct DrawingCanvas: UIViewRepresentable {
         private var drawingBeforeTool: PKDrawing?
         private var isUsingTool = false
         private var pendingSave: DispatchWorkItem?
+        /// 书写途中被拦下的「替换整个 drawing」请求，抬笔后再执行
+        private var pendingProgrammatic: (PKDrawing, Bool)?
 
         private var lastScale: CGFloat = 1
         private var lastTranslation: CGPoint = .zero
@@ -398,12 +427,14 @@ struct DrawingCanvas: UIViewRepresentable {
             undoTap.numberOfTouchesRequired = 2
             undoTap.delegate = self
             undoTap.cancelsTouchesInView = true
+            undoTap.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
             canvas.addGestureRecognizer(undoTap)
 
             let redoTap = UITapGestureRecognizer(target: self, action: #selector(handleRedoTap(_:)))
             redoTap.numberOfTouchesRequired = 3
             redoTap.delegate = self
             redoTap.cancelsTouchesInView = true
+            redoTap.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
             canvas.addGestureRecognizer(redoTap)
 
             let pencil = UIPencilInteraction()
@@ -482,13 +513,14 @@ struct DrawingCanvas: UIViewRepresentable {
         }
 
         @objc private func handleUndoTap(_ gesture: UITapGestureRecognizer) {
-            guard gesture.state == .ended else { return }
+            // 笔还没离纸时不要动画布，否则正在写的这一笔会被整段替换
+            guard gesture.state == .ended, !isUsingTool else { return }
             discardStrayDots()
             parent.onUndoTap?()
         }
 
         @objc private func handleRedoTap(_ gesture: UITapGestureRecognizer) {
-            guard gesture.state == .ended else { return }
+            guard gesture.state == .ended, !isUsingTool else { return }
             discardStrayDots()
             parent.onRedoTap?()
         }
@@ -550,8 +582,15 @@ struct DrawingCanvas: UIViewRepresentable {
 
         func applyProgrammatic(_ drawing: PKDrawing, notify: Bool = true) {
             guard let canvas else { return }
+            // 正在落笔时替换 drawing，PencilKit 手上这一笔会被整段抹掉
+            //（撤销、换页、外部改色都可能撞上这个时机），先存着，抬笔后再应用。
+            guard !isUsingTool else {
+                pendingProgrammatic = (drawing, notify)
+                return
+            }
             isProgrammatic = true
             canvas.drawing = drawing
+            (canvas as? TrackingCanvasView)?.pinViewport()
             parent.controller.currentDrawing = drawing
             if notify {
                 parent.onChange(drawing)
@@ -559,6 +598,12 @@ struct DrawingCanvas: UIViewRepresentable {
             DispatchQueue.main.async { [weak self] in
                 self?.isProgrammatic = false
             }
+        }
+
+        private func applyPendingProgrammatic() {
+            guard let pending = pendingProgrammatic else { return }
+            pendingProgrammatic = nil
+            applyProgrammatic(pending.0, notify: pending.1)
         }
 
         func canvasViewDrawingDidChange(_ canvasView: PKCanvasView) {
@@ -596,6 +641,8 @@ struct DrawingCanvas: UIViewRepresentable {
             flushSave(result)
             parent.onStrokeCommitted?(result.strokes.count)
             scheduleShapeSnap(in: canvasView)
+            // 抬笔了，把书写期间被拦下的撤销/换页/改色补上
+            applyPendingProgrammatic()
         }
 
         /// 虚线笔：PencilKit 没有原生虚线 ink，落笔后把这一笔按弧长切成若干短段
@@ -633,6 +680,12 @@ struct DrawingCanvas: UIViewRepresentable {
         func cancelPendingSave() {
             pendingSave?.cancel()
             pendingSave = nil
+        }
+
+        /// 立刻把画布当前墨迹写进存储（换页 / 画布回收前调用）
+        func flushCurrentDrawing() {
+            guard let canvas else { return }
+            flushSave(canvas.drawing)
         }
 
         // MARK: 形状识别

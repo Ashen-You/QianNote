@@ -116,6 +116,15 @@
 - 🐞 书写过程中不再触发形状识别回填，避免 `canvas.drawing` 被换成快照打断当前笔画
 - 🐞 形状识别不再把「带钩/带弧」的笔画压成直线：直线判定加了弯曲度闸门（`路径长度 / 首尾距离 < 1.08`），
   原先只看首尾两点，写字的撇、钩会被抹平，看起来像「笔一抬左边就没了」
+- 🐞 **真正的「笔迹被截断」元凶：缩略图在主线程渲染 1.5 秒**。停笔 1.2 秒后 `generateThumbnail` 于 `@MainActor`
+  合成整页（纸张 + PDF + 墨迹），实测 1542ms，期间 PencilKit 收不到触摸点，笔画就断在半路。
+  现在渲染与 `pngData()` 全在 `ioQueue`（实测降到 145ms、`main=NO`），墨迹栅格从 2× 降到 1×；
+  `ensureThumbnail` 也不再在 SwiftUI body 里同步渲染
+- 🐞 缩略图与画布内容不一致 → 数据其实没丢，是**画布被静默回填**：换页分支原来 `notify: false` 直接换成新页 drawing，
+  旧页最后 0.25 秒的墨迹既没保存也没留在画布上。现在换页前 `flushCurrentDrawing()`，画布回收时 `dismantleUIView` 再兜底
+- 🐞 书写中不替换 `canvas.drawing`：撤销 / 换页 / 外部改色撞上「笔还没离纸」会把当前笔整段抹掉，改为入队、抬笔后应用
+- 🐞 `PKCanvasView` 会随墨迹撑大 `contentSize`，`contentOffset` 非 0 时墨迹层相对纸张平移 → `layoutSubviews` 里钉死视口
+- 🐞 多点手势只数手指（`.direct`）：拿 Pencil 写时手掌压上去会被算成两指手势，抬笔就误撤销
 
 ### 暂不做
 
