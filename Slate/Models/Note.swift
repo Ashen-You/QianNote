@@ -30,6 +30,15 @@ struct AudioMarker: Identifiable, Codable, Hashable {
     var time: TimeInterval
 }
 
+// MARK: - 笔迹时间戳（逐笔回放）
+
+struct InkStamp: Identifiable, Codable, Hashable {
+    var id: UUID = UUID()
+    var pageID: UUID
+    var time: TimeInterval
+    var strokeCount: Int
+}
+
 // MARK: - 页面上的图片
 
 struct ImageItem: Identifiable, Codable, Hashable {
@@ -47,6 +56,20 @@ struct NotePage: Identifiable, Codable, Hashable {
     var id: UUID = UUID()
     var textBoxes: [TextBox] = []
     var images: [ImageItem] = []
+
+    init(id: UUID = UUID(), textBoxes: [TextBox] = [], images: [ImageItem] = []) {
+        self.id = id
+        self.textBoxes = textBoxes
+        self.images = images
+    }
+
+    /// 宽松解码：老版本没有 images / textBoxes 时不至于整本笔记打不开
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        textBoxes = try container.decodeIfPresent([TextBox].self, forKey: .textBoxes) ?? []
+        images = try container.decodeIfPresent([ImageItem].self, forKey: .images) ?? []
+    }
 }
 
 // MARK: - 笔记
@@ -74,6 +97,8 @@ struct Note: Identifiable, Codable, Hashable {
     var audioFileName: String?
     var audioDuration: TimeInterval = 0
     var markers: [AudioMarker] = []
+    /// 录音期间每一笔的落笔时刻，用于回放时逐笔复现
+    var inkStamps: [InkStamp] = []
 
     init(id: UUID = UUID(),
          title: String,
@@ -90,6 +115,29 @@ struct Note: Identifiable, Codable, Hashable {
         self.paperTint = paperTint
         self.pageWidth = Double(pageSize.width)
         self.pageHeight = Double(pageSize.height)
+    }
+
+    /// 宽松解码：老版本索引里缺少的键（例如 inkStamps）用默认值补齐，
+    /// 避免升级后整本笔记读不出来。
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        title = try container.decodeIfPresent(String.self, forKey: .title) ?? "未命名笔记"
+        createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
+        updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? createdAt
+        folderID = try container.decodeIfPresent(UUID.self, forKey: .folderID)
+        pages = try container.decodeIfPresent([NotePage].self, forKey: .pages) ?? [NotePage()]
+        paperTemplate = try container.decodeIfPresent(PaperTemplate.self, forKey: .paperTemplate) ?? .ruled
+        paperTint = try container.decodeIfPresent(PaperTint.self, forKey: .paperTint) ?? .white
+        isFavorite = try container.decodeIfPresent(Bool.self, forKey: .isFavorite) ?? false
+        pageWidth = try container.decodeIfPresent(Double.self, forKey: .pageWidth) ?? 768
+        pageHeight = try container.decodeIfPresent(Double.self, forKey: .pageHeight) ?? 1024
+        pdfFileName = try container.decodeIfPresent(String.self, forKey: .pdfFileName)
+        pdfPageCount = try container.decodeIfPresent(Int.self, forKey: .pdfPageCount) ?? 0
+        audioFileName = try container.decodeIfPresent(String.self, forKey: .audioFileName)
+        audioDuration = try container.decodeIfPresent(Double.self, forKey: .audioDuration) ?? 0
+        markers = try container.decodeIfPresent([AudioMarker].self, forKey: .markers) ?? []
+        inkStamps = try container.decodeIfPresent([InkStamp].self, forKey: .inkStamps) ?? []
     }
 
     var pageSize: CGSize {

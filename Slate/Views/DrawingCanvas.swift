@@ -49,6 +49,13 @@ final class CanvasController: ObservableObject {
         restore(target)
     }
 
+    /// 外部（套索改色 / 删除 / 复制）修改笔迹：记为一步撤销并同步回画布
+    func applyEdit(_ updated: PKDrawing) {
+        let previous = currentDrawing
+        record(previous: previous, current: updated)
+        onDrawingRestored?(updated)
+    }
+
     private func restore(_ drawing: PKDrawing) {
         currentDrawing = drawing
         onDrawingRestored?(drawing)
@@ -169,6 +176,11 @@ struct DrawingCanvas: UIViewRepresentable {
     var isShapeEligible: Bool = false
     /// 书写中触点位置（归一化 0...1），用于放大书写时自动跟手
     var onPenMove: ((CGPoint) -> Void)? = nil
+    /// 虚线笔：落笔结束后把整笔切成虚线段
+    var isDashed: Bool = false
+    var dashWidth: CGFloat = 3
+    /// 一笔结束（参数为当前页笔画总数），用于录音时间轴
+    var onStrokeCommitted: ((Int) -> Void)? = nil
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
@@ -189,6 +201,7 @@ struct DrawingCanvas: UIViewRepresentable {
         coordinator.canvas = canvas
         coordinator.currentPageID = pageID
         coordinator.toolKey = toolKey
+        coordinator.isDashed = isDashed
 
         controller.canvas = canvas
         controller.currentDrawing = initialDrawing
@@ -224,6 +237,7 @@ struct DrawingCanvas: UIViewRepresentable {
             coordinator.toolKey = toolKey
             canvas.tool = tool
         }
+        coordinator.isDashed = isDashed
 
         let policy: PKCanvasViewDrawingPolicy = fingerDrawing ? .anyInput : .pencilOnly
         if coordinator.drawingPolicy != policy {
@@ -247,7 +261,9 @@ struct DrawingCanvas: UIViewRepresentable {
         var toolKey: String = ""
         var drawingPolicy: PKCanvasViewDrawingPolicy = .default
         var isEnabled: Bool = true
+        var isDashed: Bool = false
         private var isProgrammatic = false
+        private var strokesBeforeTool = 0
 
         private var lastScale: CGFloat = 1
         private var lastTranslation: CGPoint = .zero
@@ -372,6 +388,37 @@ struct DrawingCanvas: UIViewRepresentable {
             parent.controller.record(previous: parent.controller.currentDrawing, current: drawing)
             parent.onChange(drawing)
             scheduleShapeSnap(in: canvasView)
+        }
+
+        // MARK: 一笔结束（虚线切分 / 录音时间轴 / 逐笔回放）
+
+        func canvasViewDidBeginUsingTool(_ canvasView: PKCanvasView) {
+            strokesBeforeTool = canvasView.drawing.strokes.count
+            cancelPendingSnap()
+        }
+
+        func canvasViewDidEndUsingTool(_ canvasView: PKCanvasView) {
+            if isDashed {
+                applyDashes(in: canvasView)
+            }
+            parent.onStrokeCommitted?(canvasView.drawing.strokes.count)
+        }
+
+        /// 虚线笔：PencilKit 没有原生虚线 ink，落笔后把这一笔按弧长切成若干短段
+        private func applyDashes(in canvasView: PKCanvasView) {
+            let strokes = canvasView.drawing.strokes
+            guard strokes.count > strokesBeforeTool else { return }
+            let range = strokesBeforeTool..<strokes.count
+
+            let width = max(parent.dashWidth, 1)
+            let updated = DashRenderer.apply(to: canvasView.drawing,
+                                             range: range,
+                                             dash: width * 2.6,
+                                             gap: width * 1.9)
+            guard updated.strokes.count != strokes.count else { return }
+
+            parent.controller.record(previous: canvasView.drawing, current: updated)
+            applyProgrammatic(updated)
         }
 
         // MARK: 形状识别
@@ -615,5 +662,209 @@ enum ShapeSnapper {
                                   y: center.y + radiusY * CGFloat(sin(angle))))
         }
         return result
+    }
+}
+
+// MARK: - 虚线笔
+
+/// PencilKit 没有原生虚线，这里把一笔按弧长切成一段段短笔迹来模拟。
+enum DashRenderer {
+
+    static func apply(to drawing: PKDrawing,
+                      range: Range<Int>,
+                      dash: CGFloat,
+                      gap: CGFloat) -> PKDrawing {
+        let strokes = drawing.strokes
+        guard range.lowerBound >= 0, range.upperBound <= strokes.count else { return drawing }
+
+        var output: [PKStroke] = []
+        output.reserveCapacity(strokes.count + 8)
+        for (index, stroke) in strokes.enumerated() {
+            guard range.contains(index) else {
+                output.append(stroke)
+                continue
+            }
+            let pieces = segments(for: stroke, dash: max(dash, 2), gap: max(gap, 2))
+            if pieces.count > 1 {
+                output.append(contentsOf: pieces)
+            } else {
+                output.append(stroke)
+            }
+        }
+        return PKDrawing(strokes: output)
+    }
+
+    /// 按 1.5pt 步长重采样，然后按「划线 / 空档」相位切段
+    static func segments(for stroke: PKStroke, dash: CGFloat, gap: CGFloat) -> [PKStroke] {
+        let source = Array(stroke.path)
+        guard source.count >= 2 else { return [] }
+
+        var samples: [(point: CGPoint, distance: CGFloat)] = []
+        var total: CGFloat = 0
+        var previous = source[0].location
+        samples.append((previous, 0))
+
+        let step: CGFloat = 1.5
+        for element in source.dropFirst() {
+            let target = element.location
+            let segmentLength = hypot(target.x - previous.x, target.y - previous.y)
+            if segmentLength <= 0.001 {
+                previous = target
+                continue
+            }
+            var travelled: CGFloat = 0
+            while travelled + step <= segmentLength {
+                travelled += step
+                let ratio = travelled / segmentLength
+                let point = CGPoint(x: previous.x + (target.x - previous.x) * ratio,
+                                    y: previous.y + (target.y - previous.y) * ratio)
+                total += step
+                samples.append((point, total))
+            }
+            total += segmentLength - travelled
+            previous = target
+        }
+        samples.append((previous, total))
+
+        let period = dash + gap
+        guard period > 0.5 else { return [] }
+
+        var runs: [[CGPoint]] = []
+        var run: [CGPoint] = []
+        for sample in samples {
+            let phase = sample.distance.truncatingRemainder(dividingBy: period)
+            if phase < dash {
+                run.append(sample.point)
+            } else if !run.isEmpty {
+                runs.append(run)
+                run = []
+            }
+        }
+        if !run.isEmpty { runs.append(run) }
+
+        let reference = source[0]
+        var output: [PKStroke] = []
+        for points in runs {
+            guard points.count >= 2 else { continue }
+            var strokePoints: [PKStrokePoint] = []
+            strokePoints.reserveCapacity(points.count)
+            for (index, point) in points.enumerated() {
+                strokePoints.append(PKStrokePoint(location: point,
+                                                  timeOffset: Double(index) * 0.004,
+                                                  size: reference.size,
+                                                  opacity: reference.opacity,
+                                                  force: max(reference.force, 0.5),
+                                                  azimuth: reference.azimuth,
+                                                  altitude: reference.altitude))
+            }
+            let path = PKStrokePath(controlPoints: strokePoints, creationDate: Date())
+            output.append(PKStroke(ink: stroke.ink,
+                                   path: path,
+                                   transform: stroke.transform,
+                                   mask: stroke.mask))
+        }
+        return output
+    }
+}
+
+// MARK: - 套索选择
+
+struct InkSelectionResult {
+    var indices: Set<Int>
+    var bounds: CGRect
+    var isEmpty: Bool { indices.isEmpty }
+}
+
+/// 自建套索：PencilKit 没有暴露选区 API，只能自己算命中、自己改笔迹。
+enum InkSelectionEngine {
+
+    /// 落在多边形里的笔画（按采样点比例判定，容忍手抖）
+    static func select(in drawing: PKDrawing, polygon: [CGPoint]) -> InkSelectionResult {
+        guard polygon.count >= 3 else { return InkSelectionResult(indices: [], bounds: .zero) }
+
+        var hits: Set<Int> = []
+        var box = CGRect.null
+
+        for (index, stroke) in drawing.strokes.enumerated() {
+            let points = Array(stroke.path).map { $0.location.applying(stroke.transform) }
+            guard points.count >= 2 else { continue }
+
+            let stride = max(1, points.count / 16)
+            var inside = 0
+            var counted = 0
+            var cursor = 0
+            while cursor < points.count {
+                if contains(polygon, points[cursor]) { inside += 1 }
+                counted += 1
+                cursor += stride
+            }
+            guard counted > 0 else { continue }
+            let ratio = Double(inside) / Double(counted)
+            if ratio >= 0.55 {
+                hits.insert(index)
+                let bounds = stroke.renderBounds
+                box = box.isNull ? bounds : box.union(bounds)
+            }
+        }
+
+        return InkSelectionResult(indices: hits, bounds: box.isNull ? .zero : box)
+    }
+
+    static func recolor(_ drawing: PKDrawing, indices: Set<Int>, color: UIColor) -> PKDrawing {
+        let strokes = drawing.strokes.enumerated().map { index, stroke -> PKStroke in
+            guard indices.contains(index) else { return stroke }
+            let ink = PKInk(stroke.ink.inkType, color: color)
+            return PKStroke(ink: ink, path: stroke.path, transform: stroke.transform, mask: stroke.mask)
+        }
+        return PKDrawing(strokes: strokes)
+    }
+
+    static func remove(_ drawing: PKDrawing, indices: Set<Int>) -> PKDrawing {
+        let strokes = drawing.strokes.enumerated().compactMap { index, stroke -> PKStroke? in
+            indices.contains(index) ? nil : stroke
+        }
+        return PKDrawing(strokes: strokes)
+    }
+
+    static func duplicate(_ drawing: PKDrawing, indices: Set<Int>, offset: CGSize) -> PKDrawing {
+        var strokes = drawing.strokes
+        let copies = indices.sorted().compactMap { index -> PKStroke? in
+            guard indices.contains(index), drawing.strokes.indices.contains(index) else { return nil }
+            return translated(drawing.strokes[index], by: offset)
+        }
+        strokes.append(contentsOf: copies)
+        return PKDrawing(strokes: strokes)
+    }
+
+    static func translate(_ drawing: PKDrawing, indices: Set<Int>, offset: CGSize) -> PKDrawing {
+        let strokes = drawing.strokes.enumerated().map { index, stroke -> PKStroke in
+            indices.contains(index) ? translated(stroke, by: offset) : stroke
+        }
+        return PKDrawing(strokes: strokes)
+    }
+
+    static func translated(_ stroke: PKStroke, by offset: CGSize) -> PKStroke {
+        let transform = stroke.transform
+            .concatenating(CGAffineTransform(translationX: offset.width, y: offset.height))
+        return PKStroke(ink: stroke.ink, path: stroke.path, transform: transform, mask: stroke.mask)
+    }
+
+    // MARK: 几何
+
+    static func contains(_ polygon: [CGPoint], _ point: CGPoint) -> Bool {
+        guard polygon.count >= 3 else { return false }
+        var inside = false
+        var j = polygon.count - 1
+        for i in 0..<polygon.count {
+            let a = polygon[i]
+            let b = polygon[j]
+            if (a.y > point.y) != (b.y > point.y) {
+                let t = (point.y - a.y) / (b.y - a.y)
+                let x = a.x + (b.x - a.x) * t
+                if point.x < x { inside.toggle() }
+            }
+            j = i
+        }
+        return inside
     }
 }

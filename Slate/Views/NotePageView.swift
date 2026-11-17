@@ -19,11 +19,21 @@ struct NotePageView: View {
     var onPencilDoubleTap: (() -> Void)? = nil
     var shapeRecognition: Bool = false
     var onPenMove: ((CGPoint) -> Void)? = nil
+    /// 一笔画完（参数为当前页累计笔画数），用于录音时间轴
+    var onStrokeCommitted: ((Int) -> Void)? = nil
+    /// 非 nil 时进入逐笔回放：只显示前 N 条笔迹
+    var replayStrokes: Int? = nil
 
     @State private var selectedTextID: UUID?
     @State private var editingBox: TextBox?
     @State private var dragTranslation: CGSize = .zero
     @State private var draggingID: UUID?
+
+    // 套索选区
+    @State private var lassoPoints: [CGPoint] = []
+    @State private var lassoSelection: InkSelectionResult?
+    @State private var selectionDrag: CGSize = .zero
+    @State private var croppingItem: ImageItem?
 
     // 图片对象
     @State private var selectedImageID: UUID?
@@ -44,6 +54,16 @@ struct NotePageView: View {
 
     private var pageSize: CGSize { note.pageSize }
 
+    private var canvasInteractive: Bool {
+        guard replayStrokes == nil else { return false }
+        switch tools.activeTool {
+        case .text, .lasso, .laser:
+            return false
+        default:
+            return true
+        }
+    }
+
     var body: some View {
         ZStack(alignment: .topLeading) {
             background
@@ -55,7 +75,7 @@ struct NotePageView: View {
                           tool: tools.pkTool,
                           toolKey: tools.toolKey,
                           fingerDrawing: tools.fingerDrawing,
-                          isEnabled: tools.activeTool != .text,
+                          isEnabled: canvasInteractive,
                           controller: controller,
                           onChange: { drawing in
                               store.saveDrawing(drawing, noteID: note.id, pageID: pageID)
@@ -65,11 +85,29 @@ struct NotePageView: View {
                           onDoubleTap: onDoubleTap,
                           onPencilDoubleTap: onPencilDoubleTap,
                           shapeRecognition: shapeRecognition,
-                          isShapeEligible: tools.activeTool.supportsShapeSnap,
-                          onPenMove: onPenMove)
+                          isShapeEligible: tools.activeTool.supportsShapeSnap && !tools.activeTool.isDashed,
+                          onPenMove: onPenMove,
+                          isDashed: tools.activeTool.isDashed,
+                          dashWidth: tools.width(for: .dashed),
+                          onStrokeCommitted: onStrokeCommitted)
                 .frame(width: pageSize.width, height: pageSize.height)
+                .opacity(replayStrokes == nil ? 1 : 0)
+
+            if tools.activeTool == .lasso, replayStrokes == nil {
+                lassoLayer
+            }
 
             imageHandleLayer
+
+            if replayStrokes != nil {
+                replayLayer
+            }
+
+            if tools.activeTool == .laser {
+                LaserOverlay(color: tools.color(for: .laser),
+                             width: tools.width(for: .laser))
+                    .frame(width: pageSize.width, height: pageSize.height)
+            }
 
             if tools.activeTool == .text {
                 Color.clear
@@ -92,6 +130,17 @@ struct NotePageView: View {
                     }
                 }
             }
+        }
+        .sheet(item: $croppingItem) { item in
+            if let ui = store.image(noteID: note.id, fileName: item.fileName) {
+                ImageCropperView(image: ui) { cropped, cropRect in
+                    applyCrop(item: item, cropped: cropped, cropRect: cropRect)
+                }
+            }
+        }
+        .onChange(of: tools.activeTool) { _, _ in
+            lassoPoints = []
+            lassoSelection = nil
         }
     }
 
@@ -117,6 +166,224 @@ struct NotePageView: View {
         }
     }
 
+
+    // MARK: 逐笔回放
+
+    private var replayLayer: some View {
+        let all = store.drawing(noteID: note.id, pageID: pageID)
+        let shown = Array(all.strokes.prefix(max(replayStrokes ?? 0, 0)))
+        return ReplayInkLayer(drawing: PKDrawing(strokes: shown))
+            .frame(width: pageSize.width, height: pageSize.height)
+            .allowsHitTesting(false)
+    }
+
+    // MARK: 套索
+
+    private var lassoLayer: some View {
+        ZStack(alignment: .topLeading) {
+            Color.clear
+                .frame(width: pageSize.width, height: pageSize.height)
+                .contentShape(Rectangle())
+                .gesture(lassoGesture)
+
+            if lassoPoints.count > 1 {
+                Canvas { context, _ in
+                    var path = Path()
+                    path.addLines(lassoPoints)
+                    path.closeSubpath()
+                    context.fill(path, with: .color(Theme.accent.opacity(0.10)))
+                    context.stroke(path,
+                                   with: .color(Theme.accent),
+                                   style: StrokeStyle(lineWidth: 1.6, dash: [5, 4]))
+                }
+                .frame(width: pageSize.width, height: pageSize.height)
+                .allowsHitTesting(false)
+            }
+
+            if let selection = lassoSelection, !selection.isEmpty {
+                selectionOverlay(selection)
+            }
+        }
+        .frame(width: pageSize.width, height: pageSize.height)
+    }
+
+    private var lassoGesture: some Gesture {
+        DragGesture(minimumDistance: 0, coordinateSpace: .local)
+            .onChanged { value in
+                if lassoPoints.isEmpty { lassoSelection = nil }
+                if let last = lassoPoints.last {
+                    let distance = hypot(value.location.x - last.x, value.location.y - last.y)
+                    guard distance > 2.5 else { return }
+                }
+                lassoPoints.append(value.location)
+            }
+            .onEnded { _ in
+                finishLasso()
+            }
+    }
+
+    private func finishLasso() {
+        let points = lassoPoints
+        lassoPoints = []
+        guard points.count >= 6 else {
+            lassoSelection = nil
+            return
+        }
+        let drawing = store.drawing(noteID: note.id, pageID: pageID)
+        let result = InkSelectionEngine.select(in: drawing, polygon: points)
+        withAnimation(.easeOut(duration: 0.15)) {
+            lassoSelection = result.isEmpty ? nil : result
+        }
+    }
+
+    private func selectionOverlay(_ selection: InkSelectionResult) -> some View {
+        let bounds = selection.bounds
+        let boxX = bounds.minX + selectionDrag.width
+        let boxY = bounds.minY + selectionDrag.height
+        let toolbarWidth: CGFloat = 244
+        let toolbarX = min(max(bounds.midX - toolbarWidth / 2, 8),
+                           max(pageSize.width - toolbarWidth - 8, 8))
+        let toolbarY = bounds.minY > 68
+            ? bounds.minY - 56
+            : min(bounds.maxY + 14, max(pageSize.height - 56, 8))
+
+        return ZStack(alignment: .topLeading) {
+            Rectangle()
+                .fill(Color.clear)
+                .frame(width: max(bounds.width, 10), height: max(bounds.height, 10))
+                .overlay(
+                    Rectangle().strokeBorder(Theme.accent,
+                                             style: StrokeStyle(lineWidth: 1.4, dash: [5, 4]))
+                )
+                .contentShape(Rectangle())
+                .offset(x: boxX, y: boxY)
+                .gesture(selectionMoveGesture(selection))
+
+            selectionToolbar(selection)
+                .offset(x: toolbarX, y: toolbarY)
+        }
+    }
+
+    private func selectionToolbar(_ selection: InkSelectionResult) -> some View {
+        HStack(spacing: 7) {
+            ForEach(Array(InkPalette.colors.prefix(6).enumerated()), id: \.offset) { _, color in
+                Button {
+                    recolorSelection(selection, color: color)
+                } label: {
+                    Circle()
+                        .fill(color)
+                        .frame(width: 18, height: 18)
+                        .overlay(Circle().strokeBorder(Color.primary.opacity(0.18)))
+                }
+                .buttonStyle(.plain)
+            }
+
+            Divider().frame(height: 16)
+
+            Button {
+                duplicateSelection(selection)
+            } label: {
+                Image(systemName: "plus.square.on.square")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Color.primary.opacity(0.78))
+            }
+            .buttonStyle(.plain)
+
+            Button {
+                deleteSelection(selection)
+            } label: {
+                Image(systemName: "trash")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Color.red)
+            }
+            .buttonStyle(.plain)
+
+            Button {
+                withAnimation(.easeOut(duration: 0.12)) { lassoSelection = nil }
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(.regularMaterial, in: Capsule())
+        .overlay(Capsule().strokeBorder(Color.primary.opacity(0.08), lineWidth: 1))
+        .shadow(color: Color.black.opacity(0.14), radius: 10, x: 0, y: 4)
+    }
+
+    private func selectionMoveGesture(_ selection: InkSelectionResult) -> some Gesture {
+        DragGesture(minimumDistance: 2, coordinateSpace: .local)
+            .onChanged { value in
+                selectionDrag = value.translation
+            }
+            .onEnded { value in
+                let offset = value.translation
+                selectionDrag = .zero
+                guard abs(offset.width) > 1 || abs(offset.height) > 1 else { return }
+
+                let drawing = store.drawing(noteID: note.id, pageID: pageID)
+                let updated = InkSelectionEngine.translate(drawing,
+                                                           indices: selection.indices,
+                                                           offset: offset)
+                controller.applyEdit(updated)
+
+                var moved = selection
+                moved.bounds = selection.bounds.offsetBy(dx: offset.width, dy: offset.height)
+                lassoSelection = moved
+            }
+    }
+
+    private func recolorSelection(_ selection: InkSelectionResult, color: Color) {
+        let drawing = store.drawing(noteID: note.id, pageID: pageID)
+        let updated = InkSelectionEngine.recolor(drawing,
+                                                 indices: selection.indices,
+                                                 color: UIColor(color))
+        controller.applyEdit(updated)
+        withAnimation(.easeOut(duration: 0.12)) { lassoSelection = nil }
+    }
+
+    private func duplicateSelection(_ selection: InkSelectionResult) {
+        let drawing = store.drawing(noteID: note.id, pageID: pageID)
+        let offset = CGSize(width: 26, height: 26)
+        let updated = InkSelectionEngine.duplicate(drawing, indices: selection.indices, offset: offset)
+        let originalCount = drawing.strokes.count
+        controller.applyEdit(updated)
+
+        guard updated.strokes.count > originalCount else { return }
+        var moved = selection
+        moved.indices = Set(originalCount..<updated.strokes.count)
+        moved.bounds = selection.bounds.offsetBy(dx: offset.width, dy: offset.height)
+        lassoSelection = moved
+    }
+
+    private func deleteSelection(_ selection: InkSelectionResult) {
+        let drawing = store.drawing(noteID: note.id, pageID: pageID)
+        let updated = InkSelectionEngine.remove(drawing, indices: selection.indices)
+        controller.applyEdit(updated)
+        withAnimation(.easeOut(duration: 0.12)) { lassoSelection = nil }
+    }
+
+    // MARK: 图片裁剪
+
+    private func applyCrop(item: ImageItem, cropped: UIImage, cropRect: CGRect) {
+        guard let data = cropped.pngData(),
+              let name = try? store.saveImage(data, noteID: note.id) else { return }
+
+        store.updatePage(noteID: note.id, pageID: pageID) { page in
+            guard let index = page.images.firstIndex(where: { $0.id == item.id }) else { return }
+            var updated = page.images[index]
+            updated.fileName = name
+            updated.x = Double(CGFloat(item.x) + CGFloat(item.width) * cropRect.minX)
+            updated.y = Double(CGFloat(item.y) + CGFloat(item.height) * cropRect.minY)
+            updated.width = Double(CGFloat(item.width) * cropRect.width)
+            updated.height = Double(CGFloat(item.height) * cropRect.height)
+            page.images[index] = updated
+        }
+        selectedImageID = item.id
+    }
 
     // MARK: 图片对象
 
@@ -190,6 +457,22 @@ struct NotePageView: View {
                     }
                     .buttonStyle(.plain)
                     .offset(x: 11, y: -11)
+                }
+            }
+            .overlay(alignment: .topLeading) {
+                if isSelected {
+                    Button {
+                        croppingItem = item
+                    } label: {
+                        Image(systemName: "crop")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(.white)
+                            .frame(width: 24, height: 24)
+                            .background(Circle().fill(Color.black.opacity(0.55)))
+                    }
+                    .buttonStyle(.plain)
+                    .offset(x: -12, y: -12)
+                    .accessibilityLabel("裁剪图片")
                 }
             }
             .contentShape(Rectangle())
@@ -489,6 +772,291 @@ struct PaperBackgroundView: View {
                     y += PaperLayout.lineSpacing
                 }
             }
+        }
+    }
+}
+
+// MARK: - 激光笔
+
+/// 只在屏幕上留一道会消失的红线，不写入笔迹文件
+struct LaserOverlay: View {
+    var color: Color
+    var width: CGFloat
+
+    @State private var points: [CGPoint] = []
+    @State private var clearWork: DispatchWorkItem?
+
+    var body: some View {
+        Canvas { context, _ in
+            guard points.count > 1 else { return }
+            var path = Path()
+            path.addLines(points)
+            let line = max(width, 2)
+            context.stroke(path,
+                           with: .color(color.opacity(0.22)),
+                           style: StrokeStyle(lineWidth: line * 2.4, lineCap: .round, lineJoin: .round))
+            context.stroke(path,
+                           with: .color(color.opacity(0.92)),
+                           style: StrokeStyle(lineWidth: line, lineCap: .round, lineJoin: .round))
+        }
+        .contentShape(Rectangle())
+        .gesture(
+            DragGesture(minimumDistance: 0, coordinateSpace: .local)
+                .onChanged { value in
+                    clearWork?.cancel()
+                    if let last = points.last,
+                       hypot(value.location.x - last.x, value.location.y - last.y) < 2.2 {
+                        return
+                    }
+                    points.append(value.location)
+                }
+                .onEnded { _ in
+                    let work = DispatchWorkItem { points.removeAll() }
+                    clearWork = work
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
+                }
+        )
+        .allowsHitTesting(true)
+    }
+}
+
+// MARK: - 只读笔迹层（逐笔回放用）
+
+struct ReplayInkLayer: UIViewRepresentable {
+    let drawing: PKDrawing
+
+    func makeUIView(context: Context) -> PKCanvasView {
+        let canvas = PKCanvasView()
+        canvas.backgroundColor = .clear
+        canvas.isOpaque = false
+        canvas.isUserInteractionEnabled = false
+        canvas.isScrollEnabled = false
+        canvas.drawingPolicy = .pencilOnly
+        canvas.drawing = drawing
+        return canvas
+    }
+
+    func updateUIView(_ canvas: PKCanvasView, context: Context) {
+        canvas.drawing = drawing
+    }
+}
+
+// MARK: - 图片裁剪
+
+struct ImageCropperView: View {
+    let image: UIImage
+    let onDone: (UIImage, CGRect) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var rect = CGRect(x: 0.02, y: 0.02, width: 0.96, height: 0.96)
+    @State private var baseRect: CGRect?
+
+    init(image: UIImage, onDone: @escaping (UIImage, CGRect) -> Void) {
+        self.image = image
+        self.onDone = onDone
+    }
+
+    private enum Corner: CaseIterable {
+        case topLeft, topRight, bottomLeft, bottomRight
+    }
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 12) {
+                GeometryReader { geo in
+                    let fitted = fittedRect(in: geo.size)
+                    ZStack(alignment: .topLeading) {
+                        Image(uiImage: image)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: geo.size.width, height: geo.size.height)
+
+                        dimming
+                        cropFrame(fitted: fitted)
+                    }
+                }
+                .padding(.horizontal, 18)
+                .padding(.top, 8)
+
+                Text("拖动白框四角调整保留区域，拖动框内可整体移动")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.bottom, 8)
+            }
+            .navigationTitle("裁剪图片")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("完成") { performCrop() }
+                        .fontWeight(.semibold)
+                }
+            }
+        }
+    }
+
+    private var dimming: some View {
+        Canvas { context, size in
+            var path = Path(CGRect(origin: .zero, size: size))
+            path.addRect(boxRect(fitted: fittedRect(in: size)))
+            context.fill(path,
+                         with: .color(Color.black.opacity(0.45)),
+                         style: FillStyle(eoFill: true))
+        }
+        .allowsHitTesting(false)
+    }
+
+    private func cropFrame(fitted: CGRect) -> some View {
+        let box = boxRect(fitted: fitted)
+        return ZStack(alignment: .topLeading) {
+            Rectangle()
+                .strokeBorder(Color.white, lineWidth: 1.5)
+                .frame(width: max(box.width, 1), height: max(box.height, 1))
+                .offset(x: box.minX, y: box.minY)
+                .contentShape(Rectangle())
+                .gesture(moveGesture(fitted: fitted))
+
+            ForEach(Corner.allCases, id: \.self) { corner in
+                handle(fitted: fitted, corner: corner)
+            }
+        }
+    }
+
+    private func handle(fitted: CGRect, corner: Corner) -> some View {
+        let box = boxRect(fitted: fitted)
+        let point: CGPoint
+        switch corner {
+        case .topLeft: point = CGPoint(x: box.minX, y: box.minY)
+        case .topRight: point = CGPoint(x: box.maxX, y: box.minY)
+        case .bottomLeft: point = CGPoint(x: box.minX, y: box.maxY)
+        case .bottomRight: point = CGPoint(x: box.maxX, y: box.maxY)
+        }
+
+        return Circle()
+            .fill(Color.white)
+            .frame(width: 16, height: 16)
+            .overlay(Circle().strokeBorder(Color.black.opacity(0.25), lineWidth: 1))
+            .contentShape(Circle().inset(by: -16))
+            .offset(x: point.x - 8, y: point.y - 8)
+            .gesture(resizeGesture(fitted: fitted, corner: corner))
+    }
+
+    private func moveGesture(fitted: CGRect) -> some Gesture {
+        DragGesture(minimumDistance: 2)
+            .onChanged { value in
+                if baseRect == nil { baseRect = rect }
+                guard let base = baseRect else { return }
+                let dx = value.translation.width / max(fitted.width, 1)
+                let dy = value.translation.height / max(fitted.height, 1)
+                var updated = base
+                updated.origin.x = min(max(base.minX + dx, 0), 1 - base.width)
+                updated.origin.y = min(max(base.minY + dy, 0), 1 - base.height)
+                rect = updated
+            }
+            .onEnded { _ in baseRect = nil }
+    }
+
+    private func resizeGesture(fitted: CGRect, corner: Corner) -> some Gesture {
+        DragGesture(minimumDistance: 0)
+            .onChanged { value in
+                if baseRect == nil { baseRect = rect }
+                guard let base = baseRect else { return }
+                let dx = value.translation.width / max(fitted.width, 1)
+                let dy = value.translation.height / max(fitted.height, 1)
+                var updated = base
+                switch corner {
+                case .topLeft:
+                    updated.origin.x += dx
+                    updated.origin.y += dy
+                    updated.size.width -= dx
+                    updated.size.height -= dy
+                case .topRight:
+                    updated.origin.y += dy
+                    updated.size.width += dx
+                    updated.size.height -= dy
+                case .bottomLeft:
+                    updated.origin.x += dx
+                    updated.size.width -= dx
+                    updated.size.height += dy
+                case .bottomRight:
+                    updated.size.width += dx
+                    updated.size.height += dy
+                }
+                rect = clamp(updated)
+            }
+            .onEnded { _ in baseRect = nil }
+    }
+
+    private func clamp(_ r: CGRect) -> CGRect {
+        var minX = min(r.minX, r.maxX)
+        var maxX = max(r.minX, r.maxX)
+        var minY = min(r.minY, r.maxY)
+        var maxY = max(r.minY, r.maxY)
+
+        minX = min(max(minX, 0), 1)
+        maxX = min(max(maxX, 0), 1)
+        minY = min(max(minY, 0), 1)
+        maxY = min(max(maxY, 0), 1)
+
+        if maxX - minX < 0.08 {
+            minX = min(minX, 0.92)
+            maxX = minX + 0.08
+        }
+        if maxY - minY < 0.08 {
+            minY = min(minY, 0.92)
+            maxY = minY + 0.08
+        }
+        return CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
+    }
+
+    private func fittedRect(in size: CGSize) -> CGRect {
+        let imageSize = image.size
+        guard imageSize.width > 0, imageSize.height > 0 else {
+            return CGRect(origin: .zero, size: size)
+        }
+        let scale = min(size.width / imageSize.width, size.height / imageSize.height)
+        let width = imageSize.width * scale
+        let height = imageSize.height * scale
+        return CGRect(x: (size.width - width) / 2, y: (size.height - height) / 2,
+                      width: width, height: height)
+    }
+
+    private func boxRect(fitted: CGRect) -> CGRect {
+        CGRect(x: fitted.minX + rect.minX * fitted.width,
+               y: fitted.minY + rect.minY * fitted.height,
+               width: rect.width * fitted.width,
+               height: rect.height * fitted.height)
+    }
+
+    private func performCrop() {
+        let upright = normalizedUp(image)
+        guard let cg = upright.cgImage else {
+            dismiss()
+            return
+        }
+        let pixel = CGRect(x: rect.minX * CGFloat(cg.width),
+                           y: rect.minY * CGFloat(cg.height),
+                           width: rect.width * CGFloat(cg.width),
+                           height: rect.height * CGFloat(cg.height)).integral
+        guard pixel.width > 1, pixel.height > 1, let cropped = cg.cropping(to: pixel) else {
+            dismiss()
+            return
+        }
+        onDone(UIImage(cgImage: cropped, scale: upright.scale, orientation: .up), rect)
+        dismiss()
+    }
+
+    private func normalizedUp(_ source: UIImage) -> UIImage {
+        guard source.imageOrientation != .up else { return source }
+        let format = UIGraphicsImageRendererFormat.default()
+        format.scale = source.scale
+        format.opaque = false
+        let renderer = UIGraphicsImageRenderer(size: source.size, format: format)
+        return renderer.image { _ in
+            source.draw(in: CGRect(origin: .zero, size: source.size))
         }
     }
 }

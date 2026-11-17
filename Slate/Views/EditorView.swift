@@ -12,6 +12,9 @@ struct EditorView: View {
     @StateObject private var tools = ToolStore()
     @StateObject private var controllers = CanvasControllerPool()
     @State private var audio = AudioController()
+    /// 回放时用独立的计时器驱动画面，避免录音期间每秒重绘整个编辑器
+    @State private var replayTime: TimeInterval = 0
+    @State private var replayTimer: Timer?
 
     @State private var pageIndex = 0
     @State private var showPagePanel = true
@@ -28,6 +31,10 @@ struct EditorView: View {
     @State private var showPalette = true
     @State private var showPhotoPicker = false
     @State private var photoItem: PhotosPickerItem?
+    /// 拍照插入
+    @State private var showCamera = false
+    /// 书写回放（录音 + 逐笔复现）
+    @State private var replay = false
     /// 多页连续滚动（Notability 的阅读模式）
     @State private var continuous = false
 
@@ -91,6 +98,12 @@ struct EditorView: View {
             }
         }
         .photosPicker(isPresented: $showPhotoPicker, selection: $photoItem, matching: .images)
+        .fullScreenCover(isPresented: $showCamera) {
+            CameraPicker { image in
+                insertImage(image)
+            }
+            .ignoresSafeArea()
+        }
         .onChange(of: photoItem) { _, newValue in
             guard let newValue else { return }
             Task { @MainActor in
@@ -114,14 +127,21 @@ struct EditorView: View {
             Button("保存") { store.rename(noteID, to: renameText) }
         }
         .overlay(alignment: .bottom) {
-            if let errorMessage {
-                ErrorBanner(message: errorMessage) { self.errorMessage = nil }
-                    .padding(.bottom, 96)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            VStack(spacing: 8) {
+                if replay {
+                    replayBadge
+                }
+                if let errorMessage {
+                    ErrorBanner(message: errorMessage) { self.errorMessage = nil }
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
             }
+            .padding(.bottom, 96)
         }
         .animation(.easeInOut(duration: 0.2), value: errorMessage)
         .onDisappear {
+            stopReplayTimer()
+            replay = false
             if audio.mode == .recording {
                 let duration = audio.stopRecording()
                 store.finishRecording(noteID, duration: duration)
@@ -227,7 +247,11 @@ struct EditorView: View {
                          shapeRecognition: tools.shapeRecognition,
                          onPenMove: { point in
                              followPen(point, pageSize: note.pageSize, fit: fit, viewport: geo.size)
-                         })
+                         },
+                         onStrokeCommitted: { count in
+                             recordInkStamp(pageID: currentPageID(note), count: count)
+                         },
+                         replayStrokes: replayStrokeCount(for: currentPageID(note)))
                 .frame(width: pageWidth, height: pageHeight)
                 .scaleEffect(fit * zoom, anchor: .center)
                 .frame(width: contentWidth, height: contentHeight)
@@ -269,7 +293,11 @@ struct EditorView: View {
                                      tools: tools,
                                      controller: controllers.controller(for: page.id),
                                      pdfScale: 2.5,
-                                     shapeRecognition: tools.shapeRecognition)
+                                     shapeRecognition: tools.shapeRecognition,
+                                     onStrokeCommitted: { count in
+                                         recordInkStamp(pageID: page.id, count: count)
+                                     },
+                                     replayStrokes: replayStrokeCount(for: page.id))
                             .frame(width: note.pageSize.width, height: note.pageSize.height)
                             .scaleEffect(scale)
                             .frame(width: width, height: pageHeight)
@@ -519,7 +547,8 @@ struct EditorView: View {
     /// 全屏时的窄工具条：不占版面，但能直接换笔
     private var immersiveToolCapsule: some View {
         VStack(spacing: 4) {
-            ForEach([ToolKind.pen, ToolKind.pencil, ToolKind.highlighter, ToolKind.eraser, ToolKind.lasso], id: \.self) { kind in
+            ForEach([ToolKind.pen, ToolKind.dashed, ToolKind.pencil, ToolKind.highlighter,
+                     ToolKind.laser, ToolKind.eraser, ToolKind.lasso], id: \.self) { kind in
                 Button {
                     tools.activeTool = kind
                 } label: {
@@ -629,6 +658,18 @@ struct EditorView: View {
                     showPhotoPicker = true
                 } label: {
                     Label("插入图片", systemImage: "photo.on.rectangle")
+                }
+
+                Button {
+                    showCamera = true
+                } label: {
+                    Label("拍照插入", systemImage: "camera")
+                }
+
+                Button {
+                    startReplay()
+                } label: {
+                    Label("书写回放", systemImage: "pencil.and.scribble")
                 }
 
                 Button {
@@ -847,7 +888,15 @@ struct EditorView: View {
             errorMessage = "这张图片无法读取"
             return
         }
+        insertImage(ui)
+    }
+
+    private func insertImage(_ ui: UIImage) {
         guard let note, note.pages.indices.contains(pageIndex) else { return }
+        guard let data = ui.jpegData(compressionQuality: 0.92) ?? ui.pngData() else {
+            errorMessage = "这张图片无法编码"
+            return
+        }
 
         do {
             let fileName = try store.saveImage(data, noteID: noteID)
@@ -865,11 +914,104 @@ struct EditorView: View {
             store.updatePage(noteID: noteID, pageID: pageID) { page in
                 page.images.append(item)
             }
-            // 切到套索，方便立刻拖动 / 缩放刚插入的图片
+            // 切到套索，方便立刻拖动 / 缩放 / 裁剪刚插入的图片
             tools.activeTool = .lasso
         } catch {
             errorMessage = "插入图片失败：\(error.localizedDescription)"
         }
+    }
+
+    // MARK: - 录音时间轴与书写回放
+
+    /// 录音期间每落一笔，记下当时的时刻，回放时按时间点逐笔复现
+    private func recordInkStamp(pageID: UUID, count: Int) {
+        guard audio.mode == .recording, !audio.isPaused else { return }
+        store.addInkStamp(noteID: noteID, pageID: pageID, time: audio.liveTime, strokeCount: count)
+    }
+
+    private func replayStrokeCount(for pageID: UUID) -> Int? {
+        guard replay else { return nil }
+        return store.replayStrokeCount(noteID: noteID, pageID: pageID, time: replayTime)
+    }
+
+    private func startReplay() {
+        guard let note else { return }
+        guard note.hasRecording else {
+            errorMessage = "这本笔记还没有录音。先点麦克风录一段，写下的每一笔都会被记进时间轴。"
+            return
+        }
+        guard store.hasInkTimeline(noteID: noteID) else {
+            errorMessage = "录音里还没有记录笔迹。下次录音时写点东西，回放就能一笔笔重现。"
+            return
+        }
+
+        do {
+            if audio.mode != .idle { audio.stop() }
+            try audio.play(url: store.audioURL(noteID: noteID))
+            replayTime = 0
+            replay = true
+            startReplayTimer()
+            if let first = note.markers.first, note.pages.indices.contains(first.pageIndex) {
+                pageIndex = first.pageIndex
+            }
+        } catch {
+            replay = false
+            errorMessage = "回放失败：\(error.localizedDescription)"
+        }
+    }
+
+    private func stopReplay() {
+        replay = false
+        stopReplayTimer()
+        if audio.mode == .playing { audio.stop() }
+    }
+
+    private func startReplayTimer() {
+        stopReplayTimer()
+        let timer = Timer(timeInterval: 0.1, repeats: true) { _ in
+            Task { @MainActor in
+                self.replayTime = self.audio.time
+                if self.audio.mode != .playing {
+                    self.stopReplayTimer()
+                }
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        replayTimer = timer
+    }
+
+    private func stopReplayTimer() {
+        replayTimer?.invalidate()
+        replayTimer = nil
+    }
+
+    private var replayBadge: some View {
+        HStack(spacing: 10) {
+            Image(systemName: audio.mode == .playing ? "waveform" : "pause.circle")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Theme.accent)
+
+            Text("书写回放")
+                .font(.footnote.weight(.semibold))
+
+            Text("\(replayTime.clockText) / \(audio.duration.clockText)")
+                .font(.system(.caption, design: .monospaced))
+                .foregroundStyle(.secondary)
+
+            Button {
+                stopReplay()
+            } label: {
+                Text("退出")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Theme.accent)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 9)
+        .background(.regularMaterial, in: Capsule())
+        .overlay(Capsule().strokeBorder(Theme.accent.opacity(0.25), lineWidth: 1))
+        .shadow(color: Color.black.opacity(0.12), radius: 12, x: 0, y: 4)
     }
 
     private func exportPDF() {

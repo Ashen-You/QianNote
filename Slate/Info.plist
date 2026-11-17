@@ -9,5 +9,9 @@
 	<true/>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>用相机拍摄纸面内容或板书，直接插入到笔记里。</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>从相册选择图片插入笔记。</string>
 </dict>
 </plist>

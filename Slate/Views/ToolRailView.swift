@@ -175,7 +175,21 @@ struct ToolPaletteView: View {
             }
 
             if tools.activeTool == .lasso {
-                Text("圈选后可拖动、缩放或删除笔迹")
+                Text("圈住笔迹后可以改色、复制、删除，或拖动选中框整体移动")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if tools.activeTool == .laser {
+                Text("激光笔只留一道会消失的红线，不会写进笔记")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if tools.activeTool == .dashed {
+                Text("虚线笔抬笔后自动切成虚线段，适合画框和分隔")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

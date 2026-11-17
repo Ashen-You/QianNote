@@ -103,7 +103,7 @@ struct EmptyLibraryView: View {
             VStack(spacing: 6) {
                 Text("还没有笔记")
                     .font(.title3.weight(.semibold))
-                Text("新建一本手写笔记，或导入 PDF 开始批注。")
+                Text("新建一本手写笔记，或导入 PDF / Word / 图片开始批注。")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -121,7 +121,7 @@ struct EmptyLibraryView: View {
                 .buttonStyle(.plain)
 
                 Button(action: onImport) {
-                    Label("导入 PDF", systemImage: "doc.badge.plus")
+                    Label("导入文档", systemImage: "doc.badge.plus")
                         .font(.subheadline.weight(.semibold))
                         .padding(.horizontal, 18)
                         .padding(.vertical, 10)
@@ -165,5 +165,51 @@ struct ErrorBanner: View {
         )
         .shadow(color: Color.black.opacity(0.14), radius: 14, x: 0, y: 6)
         .padding(.horizontal, 16)
+    }
+}
+
+// MARK: - 拍照
+
+struct CameraPicker: UIViewControllerRepresentable {
+    var onCapture: (UIImage) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+
+    init(onCapture: @escaping (UIImage) -> Void) {
+        self.onCapture = onCapture
+    }
+
+    func makeUIViewController(context: Context) -> UIImagePickerController {
+        let picker = UIImagePickerController()
+        picker.sourceType = UIImagePickerController.isSourceTypeAvailable(.camera) ? .camera : .photoLibrary
+        picker.allowsEditing = false
+        picker.delegate = context.coordinator
+        return picker
+    }
+
+    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {}
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+
+    final class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
+        private let parent: CameraPicker
+
+        init(_ parent: CameraPicker) {
+            self.parent = parent
+        }
+
+        func imagePickerController(_ picker: UIImagePickerController,
+                                   didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
+            if let image = info[.originalImage] as? UIImage {
+                parent.onCapture(image)
+            }
+            parent.dismiss()
+        }
+
+        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+            parent.dismiss()
+        }
     }
 }

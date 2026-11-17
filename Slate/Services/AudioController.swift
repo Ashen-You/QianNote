@@ -22,6 +22,14 @@ final class AudioController: NSObject, ObservableObject {
     private var timer: Timer?
     private var currentURL: URL?
 
+    /// 录音中的实时时长：笔迹打点直接读它，比 0.1s 轮询更准
+    var liveTime: TimeInterval {
+        if mode == .recording, let recorder = recorder, recorder.isRecording {
+            return recorder.currentTime
+        }
+        return time
+    }
+
     // MARK: - 权限
 
     func requestPermission() async -> Bool {

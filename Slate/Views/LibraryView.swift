@@ -91,7 +91,7 @@ struct LibraryView: View {
                 EditorView(noteID: id)
             }
             .fileImporter(isPresented: $showImporter,
-                          allowedContentTypes: [.pdf],
+                          allowedContentTypes: importTypes,
                           allowsMultipleSelection: true) { result in
                 handleImport(result)
             }
@@ -155,7 +155,7 @@ struct LibraryView: View {
             Button {
                 showImporter = true
             } label: {
-                Label("导入 PDF", systemImage: "doc.badge.plus")
+                Label("导入文档", systemImage: "doc.badge.plus")
             }
             Button {
                 startPrompt(.newFolder)
@@ -263,18 +263,39 @@ struct LibraryView: View {
         path.append(note.id)
     }
 
+    private var importTypes: [UTType] {
+        var types: [UTType] = [.pdf, .image, .rtf, .html, .plainText]
+        for ext in ["doc", "docx", "rtfd", "md"] {
+            if let type = UTType(filenameExtension: ext), !types.contains(type) {
+                types.append(type)
+            }
+        }
+        return types
+    }
+
     private func handleImport(_ result: Result<[URL], Error>) {
         switch result {
         case .success(let urls):
             guard let first = urls.first else { return }
+            importFile(first)
+        case .failure(let error):
+            store.errorMessage = error.localizedDescription
+        }
+    }
+
+    /// PDF 直接用；Word / RTF / HTML / 图片先转成 PDF，再走同一条导入管线
+    private func importFile(_ url: URL) {
+        Task { @MainActor in
+            let accessing = url.startAccessingSecurityScopedResource()
+            defer { if accessing { url.stopAccessingSecurityScopedResource() } }
+
             do {
-                let note = try store.importPDF(from: first)
+                let pdfURL = try await DocumentImporter.shared.convertToPDF(url: url)
+                let note = try store.importPDF(from: pdfURL)
                 path.append(note.id)
             } catch {
                 store.errorMessage = error.localizedDescription
             }
-        case .failure(let error):
-            store.errorMessage = error.localizedDescription
         }
     }
 
