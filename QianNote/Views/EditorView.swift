@@ -880,10 +880,13 @@ struct EditorView: View {
                     Label("插入新页面", systemImage: "plus.square")
                 }
                 Button {
+                    let pageID = note?.pages[safe: pageIndex]?.id ?? UUID()
                     if let note {
-                        controllers.controller(for: currentPageID(note)).resetHistory()
+                        // clearCanvas 会通过回调把画布真正清空并落盘；
+                        // store.clearPage 兜底确保 drawingCache 与磁盘也是空图。
+                        controllers.controller(for: currentPageID(note)).clearCanvas()
                     }
-                    store.clearPage(noteID: noteID, pageID: note?.pages[safe: pageIndex]?.id ?? UUID())
+                    store.clearPage(noteID: noteID, pageID: pageID)
                 } label: {
                     Label("清空当前页", systemImage: "eraser.line.dashed")
                 }

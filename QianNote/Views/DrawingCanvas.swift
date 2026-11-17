@@ -31,6 +31,16 @@ final class CanvasController: NSObject, ObservableObject {
         updateFlags()
     }
 
+    /// 清空当前页：把画布墨迹真正抹掉，并清掉撤销/重做栈与系统 undo 动作。
+    /// 与「撤销」不同——这是删光整页，不留可撤销的记录。
+    /// 通过 onDrawingRestored 回调走 Coordinator 的 applyProgrammatic，
+    /// 由它把空 drawing 应用到 PKCanvasView 并落盘。
+    func clearCanvas() {
+        resetHistory()
+        currentDrawing = PKDrawing()
+        onDrawingRestored?(PKDrawing())
+    }
+
     /// 丢弃 depth 之后的撤销步（用于「两指点击」时手指误落在画布上留下的笔迹）
     func truncateHistory(to depth: Int) {
         guard depth >= 0, depth < undoStack.count else { return }
