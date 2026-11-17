@@ -87,6 +87,67 @@ extension CGRect {
     }
 }
 
+// MARK: - App 图标切换
+
+/// 两套图标都打进包里；`nil` 表示用主图标（Assets.xcassets/AppIcon）。
+enum AppIconChoice: String, CaseIterable, Identifiable {
+    case `default`
+    case ai
+
+    var id: String { rawValue }
+
+    /// 传给 setAlternateIconName 的名字；主图标传 nil。
+    var alternateName: String? {
+        switch self {
+        case .default: return nil
+        case .ai: return "AppIconAI"
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .default: return "默认 · 手写笔记"
+        case .ai: return "AI 重绘 · 奋斗头带"
+        }
+    }
+
+    var thumbName: String {
+        switch self {
+        case .default: return "IconThumbScreenshot"
+        case .ai: return "IconThumbAI"
+        }
+    }
+
+    static func current() -> AppIconChoice {
+        AppIconChoice(rawValue: UIApplication.shared.alternateIconName ?? "") ?? .default
+    }
+}
+
+@MainActor
+final class AppIconManager: ObservableObject {
+    @Published private(set) var current: AppIconChoice = .current()
+    @Published var errorMessage: String?
+
+    /// iOS 用系统弹窗确认切换，这里只负责调用。切完记录当前项供 UI 打勾。
+    func select(_ choice: AppIconChoice) {
+        guard UIApplication.shared.supportsAlternateIcons else {
+            errorMessage = "当前系统不支持更换图标"
+            return
+        }
+        guard choice != current else { return }
+        UIApplication.shared.setAlternateIconName(choice.alternateName) { [weak self] error in
+            Task { @MainActor in
+                guard let self else { return }
+                if let error {
+                    self.errorMessage = "切换图标失败：\(error.localizedDescription)"
+                } else {
+                    self.current = choice
+                }
+            }
+        }
+    }
+}
+
 // MARK: - 调色板
 
 enum InkPalette {
