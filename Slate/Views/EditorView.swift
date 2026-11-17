@@ -167,24 +167,21 @@ struct EditorView: View {
     private func workspace(_ note: Note) -> some View {
         HStack(spacing: 0) {
             if !immersive {
-                HStack(alignment: .center, spacing: 8) {
-                    ToolRailView(tools: tools, showPalette: $showPalette)
+                ToolRailView(tools: tools, showPalette: $showPalette)
+                    .padding(.leading, 12)
+                    .frame(maxHeight: .infinity, alignment: .center)
+                    .transition(.move(edge: .leading).combined(with: .opacity))
+            }
 
-                    if showPalette {
-                        ToolPaletteView(tools: tools)
-                            .transition(.move(edge: .leading).combined(with: .opacity))
-                    }
+            Group {
+                if continuous {
+                    continuousArea(note)
+                } else {
+                    pageArea(note)
                 }
-                .padding(.leading, 12)
-                .frame(maxHeight: .infinity, alignment: .center)
-                .transition(.move(edge: .leading).combined(with: .opacity))
             }
-
-            if continuous {
-                continuousArea(note)
-            } else {
-                pageArea(note)
-            }
+            // 面板打开时，页面压一层轻遮罩：视觉上退到下一层，且不吃触摸（Pencil 照常书写）
+            .overlay { paletteScrim }
 
             if showPagePanel && !immersive {
                 PageStripView(note: note, pageIndex: $pageIndex)
@@ -193,6 +190,9 @@ struct EditorView: View {
                     .transition(.move(edge: .trailing).combined(with: .opacity))
             }
         }
+        // 工具面板浮在页面之上，不再挤占画布宽度。
+        // 注意要挂在 padding 之前：挂在后面时 overlay 的范围是整块屏幕，面板顶部会被顶栏压住
+        .overlay(alignment: .leading) { paletteFloating }
         .padding(.top, immersive ? 0 : 70)
         .padding(.bottom, immersive ? 0 : 84)
         .animation(.easeInOut(duration: 0.24), value: immersive)
@@ -217,6 +217,51 @@ struct EditorView: View {
             if pageIndex >= newCount {
                 pageIndex = max(0, newCount - 1)
             }
+        }
+    }
+
+    // MARK: - 工具面板浮层
+
+    /// 面板卡片：外面留 12pt 给阴影，卡片左边缘正好贴着工具栏右侧（12 + 58 + 8）
+    private var paletteCard: some View {
+        ToolPaletteView(tools: tools)
+            .padding(12)
+    }
+
+    /// 盖在页面上的浮层。用 ViewThatFits：放得下就按内容高度显示，
+    /// 放不下（小屏 / 横屏）才退化成可滚动的面板，不再像以前那样被容器直接切掉。
+    @ViewBuilder
+    private var paletteFloating: some View {
+        if showPalette && !immersive {
+            GeometryReader { geo in
+                ViewThatFits(in: .vertical) {
+                    paletteCard
+                    ScrollView(.vertical, showsIndicators: false) {
+                        paletteCard
+                    }
+                    .scrollBounceBehavior(.basedOnSize)
+                }
+                .frame(width: 224, alignment: .leading)
+                .frame(maxHeight: geo.size.height, alignment: .top)
+            }
+            .padding(.leading, 66)
+            .transition(.move(edge: .leading).combined(with: .opacity))
+            .zIndex(2)
+        }
+    }
+
+    /// 面板下面的遮盖层：左边深、向右淡出，做出「面板在上面、页面在下面」的层次。
+    /// 只负责视觉，不吃触摸，免得打开面板就没法写字。
+    @ViewBuilder
+    private var paletteScrim: some View {
+        if showPalette && !immersive {
+            LinearGradient(colors: [Color.black.opacity(0.14),
+                                    Color.black.opacity(0.04),
+                                    .clear],
+                           startPoint: .leading,
+                           endPoint: .trailing)
+                .allowsHitTesting(false)
+                .transition(.opacity)
         }
     }
 
