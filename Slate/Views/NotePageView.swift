@@ -27,8 +27,6 @@ struct NotePageView: View {
     /// 单指拖动页面（手指=拖动模式）
     var onFingerPan: ((CGSize) -> Void)? = nil
     var onFingerPanEnd: (() -> Void)? = nil
-    /// 非 nil 时进入逐笔回放：只显示前 N 条笔迹
-    var replayStrokes: Int? = nil
 
     @State private var selectedTextID: UUID?
     /// 正在就地编辑的文字框（不再弹窗，退格 / 全选 / 输入法都走系统原生行为）
@@ -70,7 +68,6 @@ struct NotePageView: View {
     }
 
     private var canvasInteractive: Bool {
-        guard replayStrokes == nil else { return false }
         // 拖动模式下画布必须能收触摸：套索 / 文字 / 激光笔会把画布整个关掉，
         // 拖动手势挂在画布上，画布不响应就变成「既写不了也拖不动」
         if isNavigating { return true }
@@ -121,18 +118,13 @@ struct NotePageView: View {
                           onFingerPan: onFingerPan,
                           onFingerPanEnd: onFingerPanEnd)
                 .frame(width: pageSize.width, height: pageSize.height)
-                .opacity(replayStrokes == nil ? 1 : 0)
 
             // 拖动模式下套索 / 激光 / 文字都退场，页面只负责被拖
-            if tools.activeTool == .lasso, replayStrokes == nil, !isNavigating {
+            if tools.activeTool == .lasso, !isNavigating {
                 lassoLayer
             }
 
             imageHandleLayer
-
-            if replayStrokes != nil {
-                replayLayer
-            }
 
             if tools.activeTool == .laser, !isNavigating {
                 LaserOverlay(color: tools.color(for: .laser),
@@ -231,16 +223,6 @@ struct NotePageView: View {
         }
     }
 
-
-    // MARK: 逐笔回放
-
-    private var replayLayer: some View {
-        let all = store.drawing(noteID: note.id, pageID: pageID)
-        let shown = Array(all.strokes.prefix(max(replayStrokes ?? 0, 0)))
-        return ReplayInkLayer(drawing: PKDrawing(strokes: shown))
-            .frame(width: pageSize.width, height: pageSize.height)
-            .allowsHitTesting(false)
-    }
 
     // MARK: 套索
 
@@ -902,27 +884,6 @@ struct LaserOverlay: View {
                 }
         )
         .allowsHitTesting(true)
-    }
-}
-
-// MARK: - 只读笔迹层（逐笔回放用）
-
-struct ReplayInkLayer: UIViewRepresentable {
-    let drawing: PKDrawing
-
-    func makeUIView(context: Context) -> PKCanvasView {
-        let canvas = PKCanvasView()
-        canvas.backgroundColor = .clear
-        canvas.isOpaque = false
-        canvas.isUserInteractionEnabled = false
-        canvas.isScrollEnabled = false
-        canvas.drawingPolicy = .pencilOnly
-        canvas.drawing = drawing
-        return canvas
-    }
-
-    func updateUIView(_ canvas: PKCanvasView, context: Context) {
-        canvas.drawing = drawing
     }
 }
 
