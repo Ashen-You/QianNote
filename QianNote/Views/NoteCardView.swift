@@ -50,9 +50,6 @@ struct NoteCardView: View {
         )
         .overlay(alignment: .topTrailing) {
             HStack(spacing: 5) {
-                if note.hasRecording {
-                    badge(systemName: "waveform", color: .orange)
-                }
                 if note.hasPDF {
                     badge(systemName: "doc.richtext", color: .blue)
                 }

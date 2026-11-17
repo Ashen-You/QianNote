@@ -22,23 +22,6 @@ struct TextBox: Identifiable, Codable, Hashable {
     var colorHex: String = "#1C1C1E"
 }
 
-// MARK: - 录音书签
-
-struct AudioMarker: Identifiable, Codable, Hashable {
-    var id: UUID = UUID()
-    var pageIndex: Int
-    var time: TimeInterval
-}
-
-// MARK: - 笔迹时间戳（逐笔回放）
-
-struct InkStamp: Identifiable, Codable, Hashable {
-    var id: UUID = UUID()
-    var pageID: UUID
-    var time: TimeInterval
-    var strokeCount: Int
-}
-
 // MARK: - 页面上的图片
 
 struct ImageItem: Identifiable, Codable, Hashable {
@@ -125,13 +108,6 @@ struct Note: Identifiable, Codable, Hashable {
     var pdfFileName: String?
     var pdfPageCount: Int = 0
 
-    // 录音
-    var audioFileName: String?
-    var audioDuration: TimeInterval = 0
-    var markers: [AudioMarker] = []
-    /// 录音期间每一笔的落笔时刻，用于回放时逐笔复现
-    var inkStamps: [InkStamp] = []
-
     init(id: UUID = UUID(),
          title: String,
          folderID: UUID? = nil,
@@ -150,7 +126,7 @@ struct Note: Identifiable, Codable, Hashable {
         self.pageHeight = Double(size.height)
     }
 
-    /// 宽松解码：老版本索引里缺少的键（例如 inkStamps）用默认值补齐，
+    /// 宽松解码：老版本索引里缺少的键（例如 images）用默认值补齐，
     /// 避免升级后整本笔记读不出来。
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -172,10 +148,6 @@ struct Note: Identifiable, Codable, Hashable {
         pageHeight = Double(size.height)
         pdfFileName = try container.decodeIfPresent(String.self, forKey: .pdfFileName)
         pdfPageCount = try container.decodeIfPresent(Int.self, forKey: .pdfPageCount) ?? 0
-        audioFileName = try container.decodeIfPresent(String.self, forKey: .audioFileName)
-        audioDuration = try container.decodeIfPresent(Double.self, forKey: .audioDuration) ?? 0
-        markers = try container.decodeIfPresent([AudioMarker].self, forKey: .markers) ?? []
-        inkStamps = try container.decodeIfPresent([InkStamp].self, forKey: .inkStamps) ?? []
     }
 
     var pageSize: CGSize {
@@ -187,7 +159,6 @@ struct Note: Identifiable, Codable, Hashable {
     }
 
     var hasPDF: Bool { pdfFileName != nil }
-    var hasRecording: Bool { audioFileName != nil }
 
     var pageCountText: String {
         "\(pages.count) 页"

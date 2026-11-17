@@ -38,7 +38,7 @@ final class NoteTests: XCTestCase {
     // MARK: - 宽松解码（老版本数据缺字段时用默认值补齐）
 
     func testNoteDecoding_missingNewFieldsUsesDefaults() throws {
-        // 模拟老版本索引：只有 title，没有 inkStamps / images / pdfFileName 等新字段
+        // 模拟老版本索引：只有 title，没有 images / pdfFileName 等新字段
         let json = """
         {"id":"\(UUID().uuidString)","title":"老笔记","createdAt":"2026-01-01T00:00:00Z"}
         """
@@ -49,8 +49,6 @@ final class NoteTests: XCTestCase {
 
         XCTAssertEqual(note.title, "老笔记")
         XCTAssertEqual(note.pages.count, 1, "缺 pages 时应回落到一页默认页")
-        XCTAssertTrue(note.markers.isEmpty)
-        XCTAssertTrue(note.inkStamps.isEmpty)
         XCTAssertNil(note.pdfFileName)
         XCTAssertEqual(note.paperTemplate, .ruled)
     }

@@ -383,11 +383,6 @@ struct DrawingCanvas: UIViewRepresentable {
     /// 虚线笔：落笔结束后把整笔切成虚线段
     var isDashed: Bool = false
     var dashWidth: CGFloat = 3
-    /// 一笔结束（参数为当前页笔画总数），用于录音时间轴
-    var onStrokeCommitted: ((Int) -> Void)? = nil
-    /// 录音回放时只显示前 N 笔（nil = 全部显示）。
-    /// 仅改「显示」，不碰 controller.currentDrawing，也不落盘 —— 回放是只读视图。
-    var replayMaxStrokes: Int? = nil
     /// 两指点击 → 撤销（Notability 惯例，不拿笔也能用）
     var onUndoTap: (() -> Void)? = nil
     /// 三指点击 → 重做
@@ -414,15 +409,14 @@ struct DrawingCanvas: UIViewRepresentable {
         canvas.alwaysBounceHorizontal = false
         canvas.drawingPolicy = fingerDrawing ? .anyInput : .pencilOnly
         // 拖动模式下 Pencil 也不写字（笔只拖），平时选了笔则正常写字
-        // 回放中（replayMaxStrokes != nil）一律不写字，避免把裁剪后的视图误存成真实墨迹
-        canvas.drawingGestureRecognizer.isEnabled = !pencilPans && replayMaxStrokes == nil
+        canvas.drawingGestureRecognizer.isEnabled = !pencilPans
         canvas.tool = tool
         // 首帧 bounds 还是 0，先寄存，等 layoutSubviews 量出尺寸再交给 PencilKit
         canvas.setDrawingWhenReady(initialDrawing)
 
         let coordinator = context.coordinator
         // 关键：没有 delegate 就不会有 canvasViewDrawingDidChange，
-        // 撤销栈、自动保存、形状识别、虚线切分、录音笔迹打点全部不会触发
+        // 撤销栈、自动保存、形状识别、虚线切分全部不会触发
         canvas.delegate = coordinator
         coordinator.canvas = canvas
         coordinator.currentPageID = pageID
@@ -465,8 +459,6 @@ struct DrawingCanvas: UIViewRepresentable {
             controller.currentDrawing = initialDrawing
             controller.resetHistory()
             coordinator.applyProgrammatic(initialDrawing, notify: false)
-            // 换页后整页墨迹都换了，回放裁剪必须重新计算
-            coordinator.lastReplayMax = nil
         }
 
         if coordinator.toolKey != toolKey {
@@ -481,9 +473,8 @@ struct DrawingCanvas: UIViewRepresentable {
             canvas.drawingPolicy = policy
         }
 
-        // 笔是否写字：手形模式（pencilPans）下把 PencilKit 绘制手势停掉，Pencil 只拖不写；
-        // 回放中同样停掉，只让用户看，不让写。
-        let canDraw = !pencilPans && replayMaxStrokes == nil
+        // 笔是否写字：手形模式（pencilPans）下把 PencilKit 绘制手势停掉，Pencil 只拖不写
+        let canDraw = !pencilPans
         if canvas.drawingGestureRecognizer.isEnabled != canDraw {
             canvas.drawingGestureRecognizer.isEnabled = canDraw
         }
@@ -497,12 +488,6 @@ struct DrawingCanvas: UIViewRepresentable {
         coordinator.doubleTap?.isEnabled = !fingerDrawing
         coordinator.fingerPan?.isEnabled = fingerPans
         coordinator.pencilPan?.isEnabled = pencilPans
-
-        // 录音回放：笔数变了就重设画布显示（只影响显示，不落盘）
-        if coordinator.lastReplayMax != replayMaxStrokes {
-            coordinator.lastReplayMax = replayMaxStrokes
-            coordinator.applyReplayClip(replayMaxStrokes)
-        }
     }
 
     static func dismantleUIView(_ canvas: PKCanvasView, coordinator: Coordinator) {
@@ -533,14 +518,6 @@ struct DrawingCanvas: UIViewRepresentable {
         private var pendingSave: DispatchWorkItem?
         /// 书写途中被拦下的「替换整个 drawing」请求，抬笔后再执行
         private var pendingProgrammatic: (PKDrawing, Bool)?
-        /// 上一次应用的回放裁剪笔数，用来判断是否需要重设画布
-        var lastReplayMax: Int?
-        /// 当前画布展示的是「回放裁剪视图」。
-        /// 这个窗口里任何 drawing 变化都不能落盘 —— 否则会把只显示了一半的墨迹
-        /// 写成真实内容，用户退出回放就永久丢笔。
-        /// 用持久标志而非 isProgrammatic，是因为 setDrawingWhenReady 可能等到
-        /// 下一次 layoutSubviews 才真正赋值，那时 isProgrammatic 早已复位。
-        private var isReplayClipping = false
 
         private var lastScale: CGFloat = 1
         private var lastTranslation: CGPoint = .zero
@@ -818,34 +795,6 @@ struct DrawingCanvas: UIViewRepresentable {
             }
         }
 
-        /// 录音回放：只把前 N 笔交给 PencilKit 显示。
-        ///
-        /// 与 `applyProgrammatic` 的关键区别：**不回写 controller.currentDrawing，也不落盘**。
-        /// 回放只是「看」，画布上的裁剪不能污染真实墨迹，否则退出回放就永久丢笔。
-        func applyReplayClip(_ maxStrokes: Int?) {
-            guard let canvas else { return }
-            guard !isUsingTool else { return }
-
-            let full = (boundController ?? parent.controller).currentDrawing
-            let target: PKDrawing
-            if let maxStrokes, maxStrokes < full.strokes.count {
-                target = PKDrawing(strokes: Array(full.strokes.prefix(max(0, maxStrokes))))
-            } else {
-                target = full
-            }
-
-            isProgrammatic = true
-            isReplayClipping = maxStrokes != nil
-            if let tracking = canvas as? TrackingCanvasView {
-                tracking.setDrawingWhenReady(target)
-            } else {
-                canvas.drawing = target
-            }
-            DispatchQueue.main.async { [weak self] in
-                self?.isProgrammatic = false
-            }
-        }
-
         private func applyPendingProgrammatic() {
             guard let pending = pendingProgrammatic else { return }
             pendingProgrammatic = nil
@@ -853,7 +802,7 @@ struct DrawingCanvas: UIViewRepresentable {
         }
 
         func canvasViewDrawingDidChange(_ canvasView: PKCanvasView) {
-            guard !isProgrammatic, !isReplayClipping else { return }
+            guard !isProgrammatic else { return }
             // 书写过程中这个回调会连续触发，每次都 dataRepresentation + 落盘会卡住主线程，
             // 表现为「盯着手指写，笔迹写到一半就断了」。这里合并成 0.25 秒写一次，
             // 撤销步骤则按「一笔 / 一次擦除」在抬笔时记录。
@@ -861,7 +810,7 @@ struct DrawingCanvas: UIViewRepresentable {
             scheduleShapeSnap(in: canvasView)
         }
 
-        // MARK: 一笔结束（虚线切分 / 录音时间轴 / 逐笔回放）
+        // MARK: 一笔结束（虚线切分）
 
         func canvasViewDidBeginUsingTool(_ canvasView: PKCanvasView) {
             strokesBeforeTool = canvasView.drawing.strokes.count
@@ -885,7 +834,6 @@ struct DrawingCanvas: UIViewRepresentable {
             }
 
             flushSave(result)
-            parent.onStrokeCommitted?(result.strokes.count)
             scheduleShapeSnap(in: canvasView)
             // 抬笔了，把书写期间被拦下的撤销/换页/改色补上
             applyPendingProgrammatic()
@@ -931,8 +879,6 @@ struct DrawingCanvas: UIViewRepresentable {
         /// 立刻把画布当前墨迹写进存储（换页 / 画布回收前调用）
         func flushCurrentDrawing() {
             guard let canvas else { return }
-            // 回放裁剪视图不是真实墨迹，换页时绝不能拿它覆盖磁盘上的完整内容
-            guard !isReplayClipping else { return }
             flushSave(canvas.drawing)
         }
 

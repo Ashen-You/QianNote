@@ -285,10 +285,6 @@ final class NoteStore: ObservableObject {
             try? fm.copyItem(at: sourceFolder.appendingPathComponent(pdfName),
                              to: targetFolder.appendingPathComponent(pdfName))
         }
-        if let audioName = source.audioFileName {
-            try? fm.copyItem(at: sourceFolder.appendingPathComponent(audioName),
-                             to: targetFolder.appendingPathComponent(audioName))
-        }
 
         notes.insert(copy, at: 0)
         saveNow()
@@ -753,110 +749,6 @@ final class NoteStore: ObservableObject {
         }
     }
 
-    // MARK: - 录音
-
-    func audioURL(noteID: UUID) -> URL {
-        noteFolder(noteID).appendingPathComponent("audio.m4a")
-    }
-
-    func prepareForRecording(_ noteID: UUID) {
-        update(noteID) { note in
-            note.markers.removeAll()
-            note.inkStamps.removeAll()
-            note.audioFileName = nil
-            note.audioDuration = 0
-        }
-        beginInkTimeline(noteID: noteID)
-        let url = audioURL(noteID: noteID)
-        ioQueue.async { try? FileManager.default.removeItem(at: url) }
-    }
-
-    func finishRecording(_ noteID: UUID, duration: TimeInterval) {
-        update(noteID) { note in
-            note.audioFileName = "audio.m4a"
-            note.audioDuration = duration
-            if note.markers.isEmpty {
-                note.markers = [AudioMarker(pageIndex: 0, time: 0)]
-            }
-        }
-        flushInkTimeline(noteID: noteID)
-    }
-
-    func removeRecording(_ noteID: UUID) {
-        update(noteID) { note in
-            note.audioFileName = nil
-            note.audioDuration = 0
-            note.markers.removeAll()
-            note.inkStamps.removeAll()
-        }
-        inkStampBuffer[noteID] = nil
-        let url = audioURL(noteID: noteID)
-        ioQueue.async { try? FileManager.default.removeItem(at: url) }
-    }
-
-    // MARK: 逐笔时间轴
-
-    /// 录音期间每落一笔都会打点，直接写进 notes 会触发整页重绘，
-    /// 所以先攒在内存里，录完再一次性落盘。
-    private var inkStampBuffer: [UUID: [InkStamp]] = [:]
-
-    func beginInkTimeline(noteID: UUID) {
-        inkStampBuffer[noteID] = []
-    }
-
-    func addInkStamp(noteID: UUID, pageID: UUID, time: TimeInterval, strokeCount: Int) {
-        var buffer = inkStampBuffer[noteID] ?? []
-        buffer.append(InkStamp(pageID: pageID, time: time, strokeCount: strokeCount))
-        inkStampBuffer[noteID] = buffer
-    }
-
-    func flushInkTimeline(noteID: UUID) {
-        guard let buffer = inkStampBuffer[noteID], !buffer.isEmpty else {
-            inkStampBuffer[noteID] = nil
-            return
-        }
-        inkStampBuffer[noteID] = nil
-        update(noteID) { note in
-            note.inkStamps.append(contentsOf: buffer)
-        }
-    }
-
-    /// 回放到某个时刻，这一页应该显示多少条笔迹；没有时间轴时返回 nil（正常显示）
-    func replayStrokeCount(noteID: UUID, pageID: UUID, time: TimeInterval) -> Int? {
-        guard let note = note(id: noteID) else { return nil }
-        var stamps = note.inkStamps
-        if let buffered = inkStampBuffer[noteID], !buffered.isEmpty {
-            stamps.append(contentsOf: buffered)
-        }
-        let pageStamps = stamps.filter { $0.pageID == pageID }
-        guard !pageStamps.isEmpty else { return nil }
-
-        // 录音开始前这一页已有的笔迹，回放时始终可见，之后才是逐笔出现
-        let baseline = max((pageStamps.first?.strokeCount ?? 1) - 1, 0)
-        if let first = pageStamps.first, time < first.time - 0.05 { return baseline }
-
-        var count = baseline
-        for stamp in pageStamps where stamp.time <= time + 0.05 {
-            count = max(count, stamp.strokeCount)
-        }
-        return count
-    }
-
-    func hasInkTimeline(noteID: UUID) -> Bool {
-        if let buffered = inkStampBuffer[noteID], !buffered.isEmpty { return true }
-        return !(note(id: noteID)?.inkStamps.isEmpty ?? true)
-    }
-
-    func addMarker(noteID: UUID, pageIndex: Int, time: TimeInterval) {
-        update(noteID) { note in
-            if let last = note.markers.last, abs(last.time - time) < 1.0, last.pageIndex == pageIndex {
-                return
-            }
-            note.markers.append(AudioMarker(pageIndex: pageIndex, time: time))
-            note.markers.sort { $0.time < $1.time }
-        }
-    }
-
     // MARK: - 手写 OCR 索引
 
     /// 索引是否正在跑（列表底部的进度提示用）
@@ -956,6 +848,10 @@ final class NoteStore: ObservableObject {
     /// 返回实际恢复的笔记数。
     @discardableResult
     func restoreLibrary(from source: URL) throws -> Int {
+        // delete() 把「删笔记目录」排在 ioQueue 上。这里不等队列跑空就开始往同一目录拷，
+        // 删除任务晚到一步就会把刚恢复的笔迹删掉（恢复完只剩元数据、笔迹全空）。
+        ioQueue.sync { }
+
         let backupIndexURL = source.appendingPathComponent("index.json")
         guard let data = try? Data(contentsOf: backupIndexURL),
               let backup = try? Self.decoder.decode(LibraryIndex.self, from: data) else {
@@ -1072,7 +968,7 @@ private enum WelcomeContent {
         TextBox(text: "左侧工具栏（自上而下）：手形、钢笔、虚线笔、铅笔、毛笔、单线笔、蜡笔、水彩、荧光笔、激光笔、橡皮、套索、文字\n"
                        + "第一位「手形」是拖动模式：手指和 Pencil 都只拖页面、不写字（1× 时上下拖动翻页），点任意笔即回到书写\n"
                        + "点工具＝换笔，长按工具＝调颜色与粗细；工具栏底部箭头可收起，左边缘小把手随时叫回来\n"
-                       + "右上角：撤销 / 重做、录音、缩略图、全屏；⋯ 里可导出 PDF / 本页图片；右侧缩略图栏底部 + 号插入新页面",
+                       + "右上角：撤销 / 重做、缩略图、全屏；⋯ 里可导出 PDF / 本页图片；右侧缩略图栏底部 + 号插入新页面",
                 x: 74, y: 300, width: 600, height: 230,
                 fontSize: 18, colorHex: "#1C1C1E"),
         TextBox(text: "现在，开始写点什么吧。",

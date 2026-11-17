@@ -9,7 +9,6 @@
 /* Begin PBXBuildFile section */
 		00470271669A49F4A814F7EC /* QianNoteApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 540CD1790D8D40AB82A749DE /* QianNoteApp.swift */; };
 		07EEE30939E84E5C81A65195 /* ToolRailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 169E824DA10645C4BDD0BF36 /* ToolRailView.swift */; };
-		0AE7F4709F5B4B0390D9500D /* AudioController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76FB3D3BA032417D872359B9 /* AudioController.swift */; };
 		A7B8C9D0E1F2030405060708 /* HandwritingOCR.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7B8C9D0E1F20304050607A9 /* HandwritingOCR.swift */; };
 		0F0A1DD4F0274FBFAC812760 /* NoteCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3190D2D448A543A28B2A0CFD /* NoteCardView.swift */; };
 		1D5EEC0F905649DBA7508A99 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F4D80EC58C5C403D98222809 /* Assets.xcassets */; };
@@ -17,10 +16,8 @@
 		25CA733A8AC7DEC2E77435FD /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 73F5A8371D154FAC76CECA73 /* Foundation.framework */; };
 		3529F3A5529D4AD0BCC9ED6E /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E83E430FFBA4524B2B04FA3 /* Theme.swift */; };
 		38AF93986BE84D0AAE8AAAE4 /* NotePageView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 78E5E476DB7941A8B0B5AB24 /* NotePageView.swift */; };
-		3A585DB8CB094F89AE70C08D /* AudioViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 965ACD67C5884EE6BCA31B73 /* AudioViews.swift */; };
 		57B5C7E6537A44B1AB86A9F5 /* DrawingCanvas.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3E0F2DD00C74E0CAADF6E38 /* DrawingCanvas.swift */; };
 		6D43272418035D5BD71249E3 /* NoteTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA08CAED0C116196BE210E9C /* NoteTests.swift */; };
-		F1E2D3C4B5A6978877665544 /* InkTimelineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1E2D3C4B5A69788776655AA /* InkTimelineTests.swift */; };
 		C1D2E3F405162738495A6B7C /* OCRSearchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1D2E3F405162738495A6B7D /* OCRSearchTests.swift */; };
 		D1E2F30415263748596A7B8C /* BackupRestoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1E2F30415263748596A7B8D /* BackupRestoreTests.swift */; };
 		6FC69CDA5A904F9D8E14B50E /* PageRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 82F8751E903C4239AA9DD852 /* PageRenderer.swift */; };
@@ -64,16 +61,13 @@
 		540CD1790D8D40AB82A749DE /* QianNoteApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QianNoteApp.swift; sourceTree = "<group>"; };
 		5E9A84799D754F3E8734EB63 /* Components.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Components.swift; sourceTree = "<group>"; };
 		73F5A8371D154FAC76CECA73 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS18.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
-		76FB3D3BA032417D872359B9 /* AudioController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioController.swift; sourceTree = "<group>"; };
 		A7B8C9D0E1F20304050607A9 /* HandwritingOCR.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HandwritingOCR.swift; sourceTree = "<group>"; };
 		78E5E476DB7941A8B0B5AB24 /* NotePageView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotePageView.swift; sourceTree = "<group>"; };
 		7D428E1E21BE4AE080C79609 /* LibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryView.swift; sourceTree = "<group>"; };
 		82F8751E903C4239AA9DD852 /* PageRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PageRenderer.swift; sourceTree = "<group>"; };
 		8E83E430FFBA4524B2B04FA3 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
-		965ACD67C5884EE6BCA31B73 /* AudioViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioViews.swift; sourceTree = "<group>"; };
 		B2C3D4E5F60718293A4B5C6D /* DocumentImport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentImport.swift; sourceTree = "<group>"; };
 		BA08CAED0C116196BE210E9C /* NoteTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = NoteTests.swift; path = NoteTests.swift; sourceTree = "<group>"; };
-		F1E2D3C4B5A69788776655AA /* InkTimelineTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = InkTimelineTests.swift; path = InkTimelineTests.swift; sourceTree = "<group>"; };
 		C1D2E3F405162738495A6B7D /* OCRSearchTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = OCRSearchTests.swift; path = OCRSearchTests.swift; sourceTree = "<group>"; };
 		D1E2F30415263748596A7B8D /* BackupRestoreTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BackupRestoreTests.swift; path = BackupRestoreTests.swift; sourceTree = "<group>"; };
 		C7950CECCA5A44FD8BE2D570 /* Extensions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Extensions.swift; sourceTree = "<group>"; };
@@ -110,7 +104,6 @@
 		2BA2BB6CA7BA4ED694892FFB /* Views */ = {
 			isa = PBXGroup;
 			children = (
-				965ACD67C5884EE6BCA31B73 /* AudioViews.swift */,
 				AB20000000000000000000A3 /* AboutView.swift */,
 				5E9A84799D754F3E8734EB63 /* Components.swift */,
 				D3E0F2DD00C74E0CAADF6E38 /* DrawingCanvas.swift */,
@@ -177,7 +170,6 @@
 		61FFD36B6D404E04971CD192 /* Services */ = {
 			isa = PBXGroup;
 			children = (
-				76FB3D3BA032417D872359B9 /* AudioController.swift */,
 				A7B8C9D0E1F20304050607A9 /* HandwritingOCR.swift */,
 				AB20000000000000000000A1 /* AppLogger.swift */,
 				B2C3D4E5F60718293A4B5C6D /* DocumentImport.swift */,
@@ -195,7 +187,6 @@
 			children = (
 				BA08CAED0C116196BE210E9C /* NoteTests.swift */,
 				127E60D3CF73443BCE210604 /* CanvasControllerTests.swift */,
-				F1E2D3C4B5A69788776655AA /* InkTimelineTests.swift */,
 				C1D2E3F405162738495A6B7D /* OCRSearchTests.swift */,
 				D1E2F30415263748596A7B8D /* BackupRestoreTests.swift */,
 			);
@@ -319,7 +310,6 @@
 				7A3E646DE9274C099FD98BE9 /* Note.swift in Sources */,
 				D806A14C48804A448F14EA16 /* PaperStyle.swift in Sources */,
 				229054DA8F8C425B9534998F /* ToolStore.swift in Sources */,
-				0AE7F4709F5B4B0390D9500D /* AudioController.swift in Sources */,
 				A7B8C9D0E1F2030405060708 /* HandwritingOCR.swift in Sources */,
 				AB10000000000000000000A1 /* AppLogger.swift in Sources */,
 				A1B2C3D4E5F60718293A4B5C /* DocumentImport.swift in Sources */,
@@ -328,7 +318,6 @@
 				92D98785BEE0498EBEBF9F08 /* NoteStore.swift in Sources */,
 				6FC69CDA5A904F9D8E14B50E /* PageRenderer.swift in Sources */,
 				AB10000000000000000000A2 /* UpdateChecker.swift in Sources */,
-				3A585DB8CB094F89AE70C08D /* AudioViews.swift in Sources */,
 				AB10000000000000000000A3 /* AboutView.swift in Sources */,
 				917083C8B2B142F59ECE03EE /* Components.swift in Sources */,
 				57B5C7E6537A44B1AB86A9F5 /* DrawingCanvas.swift in Sources */,
@@ -349,7 +338,6 @@
 			files = (
 				6D43272418035D5BD71249E3 /* NoteTests.swift in Sources */,
 				EA6DD8FA2F85F30687DDFE29 /* CanvasControllerTests.swift in Sources */,
-				F1E2D3C4B5A6978877665544 /* InkTimelineTests.swift in Sources */,
 				C1D2E3F405162738495A6B7C /* OCRSearchTests.swift in Sources */,
 				D1E2F30415263748596A7B8C /* BackupRestoreTests.swift in Sources */,
 			);
@@ -473,7 +461,6 @@
 				INFOPLIST_FILE = QianNote/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Qian's Note";
 				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "录制语音笔记需要使用麦克风。";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UIFileSharingEnabled = YES;
@@ -571,7 +558,6 @@
 				INFOPLIST_FILE = QianNote/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Qian's Note";
 				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "录制语音笔记需要使用麦克风。";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UIFileSharingEnabled = YES;

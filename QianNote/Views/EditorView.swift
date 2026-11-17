@@ -15,9 +15,6 @@ struct EditorView: View {
 
     @StateObject private var tools = ToolStore()
     @StateObject private var controllers = CanvasControllerPool()
-    /// 必须用 @StateObject：回放时 replayMax 要跟着 audio.time 走，
-    /// @State 不会订阅 @Published，笔迹就永远停在回放开始的那一笔。
-    @StateObject private var audio = AudioController()
     @State private var pageIndex = 0
     @State private var showPagePanel = true
     @State private var showRename = false
@@ -77,24 +74,6 @@ struct EditorView: View {
 
     private var compact: Bool { sizeClass == .compact }
 
-    // MARK: - 录音时间轴（逐笔回放）
-
-    /// 抬笔时给这一笔打上录音时间戳。只在真正录音时记账，
-    /// 否则 inkStampBuffer 会被凭空创建、又永远不 flush。
-    private func stampStroke(pageID: UUID, strokeCount: Int) {
-        guard audio.mode == .recording, !audio.isPaused else { return }
-        store.addInkStamp(noteID: noteID,
-                          pageID: pageID,
-                          time: audio.liveTime,
-                          strokeCount: strokeCount)
-    }
-
-    /// 回放到当前时刻，这一页应该显示多少笔。nil 表示不裁剪（正常显示全部）。
-    private func replayMax(for pageID: UUID) -> Int? {
-        guard audio.mode == .playing else { return nil }
-        return store.replayStrokeCount(noteID: noteID, pageID: pageID, time: audio.time)
-    }
-
     var body: some View {
         ZStack {
             Theme.editorBackdrop.ignoresSafeArea()
@@ -120,12 +99,6 @@ struct EditorView: View {
         }
         .overlay(alignment: .bottom) {
             bottomBar
-                .opacity(immersive ? 0 : 1)
-                .allowsHitTesting(!immersive)
-        }
-        .overlay(alignment: .top) {
-            AudioPanelView(audio: audio, noteID: noteID, title: note?.title ?? "")
-                .padding(.top, compact ? 62 : 74)
                 .opacity(immersive ? 0 : 1)
                 .allowsHitTesting(!immersive)
         }
@@ -178,12 +151,6 @@ struct EditorView: View {
         .animation(.easeInOut(duration: 0.2), value: errorMessage)
         .animation(.easeInOut(duration: 0.18), value: toast)
         .onDisappear {
-            if audio.mode == .recording {
-                let duration = audio.stopRecording()
-                store.finishRecording(noteID, duration: duration)
-            } else {
-                audio.stop()
-            }
             store.markUpdated(noteID)
         }
     }
@@ -217,12 +184,6 @@ struct EditorView: View {
         .padding(.top, immersive ? 0 : (compact ? 58 : 70))
         .padding(.bottom, immersive ? 0 : (compact ? 74 : 84))
         .animation(.easeInOut(duration: 0.24), value: immersive)
-        .overlay {
-            AudioSyncView(audio: audio,
-                          noteID: noteID,
-                          markers: note.markers,
-                          pageIndex: $pageIndex)
-        }
         .onAppear {
             pageIndex = min(pageIndex, max(note.pages.count - 1, 0))
             controllers.systemUndoManager = undoManager
@@ -425,10 +386,6 @@ struct EditorView: View {
                          onPenMove: { point in
                              followPen(point, pageSize: note.pageSize, fit: fit, viewport: geo.size)
                          },
-                         onStrokeCommitted: { count in
-                             stampStroke(pageID: currentPageID(note), strokeCount: count)
-                         },
-                         replayMaxStrokes: replayMax(for: currentPageID(note)),
                          onUndoTap: { gestureUndo(currentPageID(note)) },
                          onRedoTap: { gestureRedo(currentPageID(note)) },
                          onFingerPan: { delta in
@@ -577,10 +534,6 @@ struct EditorView: View {
                      },
                      shapeRecognition: tools.shapeRecognition,
                      onPenMove: { _ in },
-                     onStrokeCommitted: { count in
-                         stampStroke(pageID: page.id, strokeCount: count)
-                     },
-                     replayMaxStrokes: replayMax(for: page.id),
                      onUndoTap: { gestureUndo(page.id) },
                      onRedoTap: { gestureRedo(page.id) },
                      onFingerPan: { delta in
@@ -961,14 +914,6 @@ struct EditorView: View {
             .padding(.vertical, 2)
             .background(Capsule().fill(Color.primary.opacity(0.05)))
 
-            AudioToolbarView(audio: audio,
-                             noteID: noteID,
-                             hasRecording: note?.hasRecording ?? false,
-                             onError: { errorMessage = $0 })
-                .padding(.horizontal, 4)
-                .padding(.vertical, 2)
-                .background(Capsule().fill(Color.primary.opacity(0.05)))
-
             if !compact {
                 IconButton(systemName: "sidebar.right",
                            isActive: showPagePanel,
@@ -1040,14 +985,6 @@ struct EditorView: View {
                 }
                 Toggle(isOn: $tools.handMode) {
                     Label("拖动模式（笔也不写字）", systemImage: "hand.point.up.left")
-                }
-                if note?.hasRecording == true {
-                    Button(role: .destructive) {
-                        audio.stop()
-                        store.removeRecording(noteID)
-                    } label: {
-                        Label("删除录音", systemImage: "waveform.slash")
-                    }
                 }
                 Button {
                     exportPDF()
