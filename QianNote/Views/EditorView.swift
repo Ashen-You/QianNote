@@ -54,6 +54,8 @@ struct EditorView: View {
     @State private var continuousPage: Int? = nil
     /// 连续滚动 + 手形模式下，Pencil 单指拖动的累积位移（用于翻页）
     @State private var flowSwipeAccum: CGFloat = 0
+    /// 连续滚动视口宽度（由 onGeometryChange 监听，稳定非 0；避免 GeometryReader 初始 0 导致 fit 算错）
+    @State private var flowViewportWidth: CGFloat = 0
 
     enum EditorSheet: Identifiable {
         case share(URL)
@@ -443,13 +445,17 @@ struct EditorView: View {
     /// 手指上下滑动连续翻页（看 PDF 的体验），Pencil 照常在各页画布上书写。
     /// 每页一个独立的撤销栈（CanvasControllerPool 已按页隔离）。
     ///
-    /// 缩放作用在「整个滚动容器」上：每页只是一个原尺寸 item 直接拼接（无任何遮罩 / 额外缩放），
-    /// 缩放（zoom）统一加在 ScrollView 外层，页面内容跟整个列表一起放大 / 平移。
+    /// 缩放作用在「整个滚动画布」上：用单一的双向 ScrollView（[.horizontal, .vertical]），
+    /// 每页 flowPage 用真实布局尺寸随 zoom 放大（宽高 × zoom、面积 × zoom²），
+    /// 横向 / 纵向滚动范围都由内容尺寸天然决定，放大后画布跟着变大，不会出现
+    /// 「画布没放大、内容被固定视口裁剪」的问题。每页只是列表里的一个 item，无遮罩。
     private func continuousArea(_ note: Note) -> some View {
         GeometryReader { geo in
             let inset: CGFloat = immersive ? 0 : (compact ? 8 : 24)
-            // 页面适配后的显示宽度（不含用户缩放 zoom）
-            let fitWidth = max(geo.size.width - inset * 2, 1)
+            // 用稳定的视口宽度（onGeometryChange 监听，避免 GeometryReader 初始 0 阶段算错）。
+            // 首次为 0 时退回 geo.size.width，保证至少不崩。
+            let vw = flowViewportWidth > 1 ? flowViewportWidth : geo.size.width
+            let fitWidth = max(vw - inset * 2, 1)
             let pageWidth = CGFloat(max(note.pageWidth, 1))
             let pageHeight = CGFloat(max(note.pageHeight, 1))
             let fit = fitWidth / max(pageWidth, 1)
@@ -458,7 +464,7 @@ struct EditorView: View {
             let renderedHeight = pageHeight * fit * zoom
 
             ScrollViewReader { proxy in
-                ScrollView(.vertical, showsIndicators: false) {
+                ScrollView([.horizontal, .vertical], showsIndicators: false) {
                     LazyVStack(spacing: immersive ? 8 : 18) {
                         ForEach(Array(note.pages.enumerated()), id: \.element.id) { index, page in
                             flowPage(note, page: page, index: index,
@@ -469,22 +475,22 @@ struct EditorView: View {
                                 .id(index)
                                 .onAppear {
                                     // 只负责把该页的撤销栈激活，页码同步交给 scrollPosition。
-                                    // 之前这里写 pageIndex = index，在 LazyVStack 惰性加载时
-                                    // 页面刚进入视口边缘就触发，配合下面的 scrollTo 造成瞬移。
                                     controllers.activate(page.id)
                                 }
                         }
                     }
+                    // 让列表至少占满视口宽度，zoom=1 时每页水平居中；放大后横向滚动由内容尺寸撑开。
+                    .frame(minWidth: vw)
                     // 沉浸全屏下 workspace 顶部 padding 归零，页面会滚到状态栏下面；
-                    // 这里把顶部安全区补回来，让第一页顶部始终停在状态栏之下。
                     .padding(.top, immersive ? geo.safeAreaInsets.top : 16)
                     .padding(.bottom, immersive ? max(geo.safeAreaInsets.bottom, 16) : 16)
                 }
-                // 缩放作用在每页的真实布局尺寸上（flowPage 内 fit*zoom），
-                // ScrollView 内容尺寸随 zoom 变大，滚动范围天然匹配。
-                // 放大后横向可平移：offset(pan) 只做水平平移（纵向交给 ScrollView 滚动）。
-                .offset(x: pan.width)
                 .scrollPosition(id: $continuousPage)
+                .onGeometryChange(for: CGFloat.self) { proxy in
+                    proxy.size.width
+                } action: { newWidth in
+                    if newWidth > 1 { flowViewportWidth = newWidth }
+                }
                 .onAppear {
                     // 首次进入定位：从缩略图/历史恢复到非第一页时，scrollPosition 初始为 nil，
                     // 需要主动滚一次。等布局稳定后跳过去（无动画，避免进入时看到一段滚动）。
@@ -495,7 +501,6 @@ struct EditorView: View {
                 }
                 .onChange(of: continuousPage) { _, newValue in
                     // 用户手指滚动到位后，把「最接近视口顶部的页」同步成当前页码。
-                    // 程序 scrollTo 动画期间（isProgrammaticScroll）不响应，避免反向覆盖。
                     guard !isProgrammaticScroll else { return }
                     if let newValue, newValue != pageIndex {
                         pageIndex = newValue
@@ -503,8 +508,6 @@ struct EditorView: View {
                 }
                 .onChange(of: pageIndex) { _, newValue in
                     // 点右侧缩略图 / 底栏翻页按钮时，滚动到对应页。
-                    // 若目标页已是当前滚动位置（滚动同步刚把 pageIndex 改成它），则跳过，
-                    // 否则会形成「滚动→同步→scrollTo」的回环瞬移。
                     guard !isProgrammaticScroll else { return }
                     if continuousPage == newValue { return }
                     isProgrammaticScroll = true
@@ -522,7 +525,7 @@ struct EditorView: View {
 
     /// 连续滚动模式下的一页：一个普通列表 item。
     /// 页面（PDF 底稿 + 墨迹）在 NotePageView 内部完整渲染，这里用「真实布局尺寸」缩放：
-    /// scaleEffect(fit*zoom) 把原尺寸页面放大，frame 用放大后的宽高，ScrollView 滚动范围天然匹配。
+    /// scaleEffect(fit*zoom) 把原尺寸页面放大，frame 用放大后的宽高，滚动范围天然匹配。
     /// 无任何覆盖层 / 额外背景 / 阴影——页与页直接拼接。
     @ViewBuilder
     private func flowPage(_ note: Note, page: NotePage, index: Int,
@@ -558,7 +561,7 @@ struct EditorView: View {
                      },
                      onFingerPanEnd: { flowSwipeAccum = 0 },
                      fingerPans: false)
-            // 对照单页 pageArea 的缩放链：先固定原始尺寸 → scaleEffect(center) → 缩放后 frame。
+            // 对照单页 pageArea 验证过的缩放链：固定原始尺寸 → scaleEffect(center) → 缩放后 frame。
             // 页与页直接拼接，无遮罩。
             .frame(width: pageWidth, height: pageHeight)
             .scaleEffect(fit * zoom, anchor: .center)
@@ -568,35 +571,25 @@ struct EditorView: View {
 
     // MARK: 连续滚动整体缩放（zoom 作用在整个页面流，而非单页）
     //
-    // 结构：ScrollView（列表，每页 flowPage 用 scaleEffect(fit*zoom) + frame(×zoom) 做真实布局缩放）
-    //       → .offset(x: pan.width) 水平平移。
-    // zoom 线性作用在每页宽高上（面积自然 × zoom²），pan 是缩放后的屏幕坐标（仅水平）。
-    // 每页只是列表里的一个普通 item，页面内容（PDF + 墨迹）在 NotePageView 内部渲染，无覆盖层。
+    // 结构：单一双向 ScrollView([.horizontal, .vertical])，LazyVStack 每页 flowPage 用
+    //       scaleEffect(fit*zoom) + frame(×zoom) 做真实布局缩放。
+    // zoom 线性作用在每页宽高上（面积自然 × zoom²），横向 / 纵向滚动范围都由内容尺寸天然决定，
+    // 放大后画布跟着变大、横向可滚动，不会出现「画布没放大、内容被固定视口裁剪」。
+    // 每页只是列表里的一个普通 item，无覆盖层。
 
     /// 双指捏合：围绕捏合中心缩放整个页面流。
+    /// 缩放用真实布局尺寸（renderedWidth/Height 随 zoom 变），横向滚动范围由 ScrollView 自动更新。
     private func applyFlowPinch(_ delta: CGFloat, focal: CGPoint, viewport: CGSize) {
         let old = zoom
         let new = min(max(old * delta, 1), 6)
         guard abs(new - old) > 0.0005 else { return }
-
-        // 围绕捏合中心缩放：保持焦点在屏幕上不动（屏幕坐标）。
-        let contentW = viewport.width * old
-        let k = new / old
-        pan.width += contentW * (k - 1) * (0.5 - focal.x)
-
         zoom = new
-        if new <= 1.001 {
-            pan = .zero
-        }
-        pan = clampedFlowPan(contentWidth: contentW * k, viewport: viewport)
     }
 
-    /// 双指拖动：放大后水平平移页面流（纵向由 ScrollView 原生滚动负责）。
-    /// delta 是屏幕像素，直接累加即可。
+    /// 双指拖动：放大后横向平移页面流。
+    /// 横向滚动交给双向 ScrollView 原生处理，这里不再手算 pan。
     private func applyFlowPan(_ delta: CGSize, contentWidth: CGFloat, viewport: CGSize) {
-        guard zoom > 1.001 else { return }
-        pan.width += delta.width
-        pan = clampedFlowPan(contentWidth: contentWidth, viewport: viewport)
+        // 横向平移由双向 ScrollView 原生接管，无需处理。
     }
 
     private func toggleFlowZoom(focal: CGPoint, viewport: CGSize) {
@@ -605,20 +598,9 @@ struct EditorView: View {
             return
         }
         let target: CGFloat = 2.2
-        let contentW = viewport.width
-        var newPanX = pan.width + contentW * (target - 1) * (0.5 - focal.x)
         withAnimation(.easeOut(duration: 0.24)) {
             zoom = target
-            pan = CGSize(width: newPanX, height: 0)
         }
-        pan = clampedFlowPan(contentWidth: contentW * target, viewport: viewport)
-    }
-
-    /// 限制水平平移范围，避免放大后的页面流被拖出左右边缘（纵向交给 ScrollView）。
-    /// contentWidth 是缩放后的真实页面宽度；平移量上限 = 页面超出视口的宽度的一半。
-    private func clampedFlowPan(contentWidth: CGFloat, viewport: CGSize) -> CGSize {
-        let maxX = max(0, (contentWidth - viewport.width) / 2)
-        return CGSize(width: min(max(pan.width, -maxX), maxX), height: 0)
     }
 
     /// 手形模式下 Pencil 单指拖动整个页面流：累积位移翻页。
