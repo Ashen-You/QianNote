@@ -69,6 +69,12 @@ extension Array {
 
 // MARK: - Geometry
 
+extension CGSize {
+    func scaled(by factor: CGFloat) -> CGSize {
+        CGSize(width: width * factor, height: height * factor)
+    }
+}
+
 extension CGRect {
     static func aspectFit(_ content: CGSize, in rect: CGRect) -> CGRect {
         guard content.width > 0, content.height > 0 else { return rect }

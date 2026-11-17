@@ -24,6 +24,9 @@ struct NotePageView: View {
     /// 两指点击撤销 / 三指点击重做
     var onUndoTap: (() -> Void)? = nil
     var onRedoTap: (() -> Void)? = nil
+    /// 单指拖动页面（手指=拖动模式）
+    var onFingerPan: ((CGSize) -> Void)? = nil
+    var onFingerPanEnd: (() -> Void)? = nil
     /// 非 nil 时进入逐笔回放：只显示前 N 条笔迹
     var replayStrokes: Int? = nil
 
@@ -101,7 +104,10 @@ struct NotePageView: View {
                           dashWidth: tools.width(for: .dashed),
                           onStrokeCommitted: onStrokeCommitted,
                           onUndoTap: onUndoTap,
-                          onRedoTap: onRedoTap)
+                          onRedoTap: onRedoTap,
+                          fingerPans: onFingerPan != nil && !tools.fingerDrawing,
+                          onFingerPan: onFingerPan,
+                          onFingerPanEnd: onFingerPanEnd)
                 .frame(width: pageSize.width, height: pageSize.height)
                 .opacity(replayStrokes == nil ? 1 : 0)
 

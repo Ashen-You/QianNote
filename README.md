@@ -87,7 +87,7 @@ TEAM_ID=你的TeamID bash Scripts/build_ipa.sh --signed   # 用本机证书导�
 - **激光笔**：只留一道会淡出的红线，不写进笔记，适合讲课时指点
 - **撤销 / 重做**：自带快照式撤销栈（最多 60 步），顶栏按钮实时可用
 - **无笔手势**：**两指点击撤销 / 三指点击重做**，不拿 Pencil、只用手指也能操作（指写模式下同样有效，落指误触的笔迹会自动清掉）
-- 手指书写开关（关闭后只能用 Pencil 书写）
+- 手指书写开关（关闭后只能用 Pencil 书写，单指拖动页面：放大后平移、1× 上下拖动翻页）
 - 倾斜 / 压感由 PencilKit 原生支持
 
 ### 页面与纸张
@@ -98,6 +98,7 @@ TEAM_ID=你的TeamID bash Scripts/build_ipa.sh --signed   # 用本机证书导�
 
 ### 缩放与书写
 - **双指捏合 1×–6×**，以手指中心为锚点缩放；双指拖动平移，边界自动夹取
+- **手指=拖动**：单指拖动页面，放大后平移，1× 时上下拖动翻页 —— 不拿笔也能翻页、挪纸
 - **双击切换 2.2× / 整页**（指写模式下自动关闭，避免抢走单指落笔）
 - 右下角倍率徽章，一键恢复整页；缩放后 PDF 按档位重渲染，放大不糊
 - Apple Pencil 笔杆双击切换「笔 ↔ 橡皮」
@@ -187,6 +188,8 @@ Documents/Slate/
 - **画布代理（易踩的坑）**：`makeUIView` 里必须 `canvas.delegate = coordinator`。`canvasViewDrawingDidChange` 是撤销栈、自动保存、形状识别、虚线切分、录音笔迹打点的**唯一入口**，代理没接上时这些功能会全部静默失效（表现为顶栏撤销/重做一直置灰）。
 - **撤销**：不依赖 `UndoManager`，而是 `CanvasController` 保存 `PKDrawing` 快照栈，撤销时整体回填并回写存储，行为稳定。
 - **无笔手势**：两指/三指 `UITapGestureRecognizer` 挂在画布上。指写模式下两根手指落下可能先留两个点，所以第二指落下时记下「撤销栈深度 + 笔画数」，识别成手势后用 `truncateHistory` 丢掉这几步、只清理点状笔迹，再执行撤销/重做。
+- **落盘节流**：`canvasViewDrawingDidChange` 在书写过程中会连续回调，逐次 `dataRepresentation()` 会卡住主线程（笔迹写到一半就断）。现在按 0.25 秒合并写一次，抬笔时 `flushSave` 立即落盘；撤销快照只在 `canvasViewDidBegin/EndUsingTool` 之间记一次，一笔一步。
+- **纯手拖**：单指 `UIPanGestureRecognizer`（`allowedTouchTypes = .direct`，只吃手指不吃 Pencil）只在「手指=拖动」时启用；位移按 `fit × zoom` 换算成屏幕点，1× 时累积超过 84pt 就翻页。
 - **页面缩放**：页面按固定点数（默认 768×1024，导入 PDF 时取 PDF 页尺寸）绘制，用 `scaleEffect` 适配屏幕。这样墨迹坐标与纸张尺寸解耦，换设备、导出都不会变形。
 - **PDF 批注**：以 PDF 页的 `thumbnail` 作为底图铺在画布下，导出时再用 `UIGraphicsPDFRenderer` 把「PDF 页 + 墨迹 + 文字」按 2 倍分辨率合成新 PDF。
 - **录音同步**：录音时监听 `pageIndex` 变化写入 `AudioMarker(pageIndex,time)`；回放时监听播放进度，命中最近的书签就自动翻页。

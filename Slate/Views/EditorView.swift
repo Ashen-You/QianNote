@@ -45,6 +45,8 @@ struct EditorView: View {
     @State private var zoom: CGFloat = 1
     /// 缩放后的平移量（点）
     @State private var pan: CGSize = .zero
+    /// 纯手拖：1× 时上下拖动累积的位移，用来翻页
+    @State private var swipeAccum: CGFloat = 0
 
     enum EditorSheet: Identifiable {
         case share(URL)
@@ -242,7 +244,7 @@ struct EditorView: View {
                                         pageSize: note.pageSize, fit: fit, viewport: geo.size)
                          },
                          onPan: { delta in
-                             applyPan(delta,
+                             applyPan(delta.scaled(by: fit * zoom),
                                       contentSize: CGSize(width: contentWidth, height: contentHeight),
                                       viewport: geo.size)
                          },
@@ -261,6 +263,13 @@ struct EditorView: View {
                          },
                          onUndoTap: { gestureUndo(currentPageID(note)) },
                          onRedoTap: { gestureRedo(currentPageID(note)) },
+                         onFingerPan: { delta in
+                             handleFingerPan(delta.scaled(by: fit * zoom),
+                                             contentSize: CGSize(width: contentWidth, height: contentHeight),
+                                             viewport: geo.size,
+                                             pageCount: note.pages.count)
+                         },
+                         onFingerPanEnd: { swipeAccum = .zero },
                          replayStrokes: replayStrokeCount(for: currentPageID(note)))
                 .frame(width: pageWidth, height: pageHeight)
                 .scaleEffect(fit * zoom, anchor: .center)
@@ -398,6 +407,25 @@ struct EditorView: View {
         pan.width += delta.width
         pan.height += delta.height
         pan = clampedPan(contentSize: contentSize, viewport: viewport)
+    }
+
+    /// 手指=拖动：放大时平移页面，1× 时上下拖动翻页
+    private func handleFingerPan(_ delta: CGSize, contentSize: CGSize,
+                                 viewport: CGSize, pageCount: Int) {
+        if zoom > 1.001 {
+            applyPan(delta, contentSize: contentSize, viewport: viewport)
+            return
+        }
+
+        swipeAccum += delta.height
+        guard abs(swipeAccum) > 84, pageCount > 1 else { return }
+
+        let target = swipeAccum < 0 ? pageIndex + 1 : pageIndex - 1
+        swipeAccum = 0
+        guard target >= 0, target < pageCount else { return }
+
+        withAnimation(.easeInOut(duration: 0.18)) { pageIndex = target }
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
     }
 
     private func toggleZoom(focal: CGPoint, pageSize: CGSize, fit: CGFloat, viewport: CGSize) {
@@ -866,7 +894,7 @@ struct EditorView: View {
                     Toggle(isOn: $tools.fingerDrawing) {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("手指书写").font(.subheadline)
-                            Text("关闭后只能用 Apple Pencil 书写，手指用于滚动与操作")
+                            Text("关闭后书写只用 Apple Pencil，单指拖动页面：放大时平移，1× 时上下拖动翻页")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -882,6 +910,7 @@ struct EditorView: View {
 
                         gestureRow("两指点击", "撤销")
                         gestureRow("三指点击", "重做")
+                        gestureRow("单指拖动（手指=拖动）", "平移 / 翻页")
                         gestureRow("双指捏合 / 拖动", "缩放 / 平移")
                         gestureRow("双击（指写模式除外）", "整页 ↔ 2.2×")
                     }

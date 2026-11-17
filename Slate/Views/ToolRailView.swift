@@ -194,6 +194,29 @@ struct ToolPaletteView: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+
+            Divider()
+
+            // 手指怎么用：书写 / 拖动页面（不拿笔也能翻页、平移）
+            VStack(alignment: .leading, spacing: 6) {
+                Text("手指")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+
+                Picker("", selection: $tools.fingerDrawing) {
+                    Text("书写").tag(true)
+                    Text("拖动").tag(false)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+
+                Text(tools.fingerDrawing
+                     ? "手指直接落笔，适合没有 Pencil 的时候"
+                     : "单指拖动页面：放大后平移，1× 时上下拖动翻页")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .padding(12)
         .frame(width: 200, alignment: .leading)

@@ -236,6 +236,10 @@ struct DrawingCanvas: UIViewRepresentable {
     var onUndoTap: (() -> Void)? = nil
     /// 三指点击 → 重做
     var onRedoTap: (() -> Void)? = nil
+    /// 手指拖动页面（关闭「手指书写」后启用）
+    var fingerPans: Bool = false
+    var onFingerPan: ((CGSize) -> Void)? = nil
+    var onFingerPanEnd: (() -> Void)? = nil
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
@@ -289,6 +293,7 @@ struct DrawingCanvas: UIViewRepresentable {
             coordinator.currentPageID = pageID
             coordinator.toolKey = toolKey
             coordinator.cancelPendingSnap()
+            coordinator.cancelPendingSave()
             controller.currentDrawing = initialDrawing
             controller.resetHistory()
             coordinator.applyProgrammatic(initialDrawing, notify: false)
@@ -313,6 +318,7 @@ struct DrawingCanvas: UIViewRepresentable {
 
         // 手写模式（单指书写）下双击会被误判，只保留双指手势
         coordinator.doubleTap?.isEnabled = !fingerDrawing
+        coordinator.fingerPan?.isEnabled = fingerPans
     }
 
     final class Coordinator: NSObject, PKCanvasViewDelegate, UIGestureRecognizerDelegate, UIPencilInteractionDelegate {
@@ -325,11 +331,15 @@ struct DrawingCanvas: UIViewRepresentable {
         var isDashed: Bool = false
         private var isProgrammatic = false
         private var strokesBeforeTool = 0
+        private var drawingBeforeTool: PKDrawing?
+        private var isUsingTool = false
+        private var pendingSave: DispatchWorkItem?
 
         private var lastScale: CGFloat = 1
         private var lastTranslation: CGPoint = .zero
         private var pendingSnap: DispatchWorkItem?
         var doubleTap: UITapGestureRecognizer?
+        var fingerPan: UIPanGestureRecognizer?
         weak var trackingCanvas: TrackingCanvasView?
 
         /// 多点手势开始时的撤销栈深度与笔画数，用于清掉手指误落在画布上的笔迹
@@ -371,6 +381,17 @@ struct DrawingCanvas: UIViewRepresentable {
             tap.isEnabled = !parent.fingerDrawing
             canvas.addGestureRecognizer(tap)
             self.doubleTap = tap
+
+            // 单指拖动页面：只在「手指=拖动」时启用，避免抢走指写
+            let fingerPan = UIPanGestureRecognizer(target: self, action: #selector(handleFingerPan(_:)))
+            fingerPan.minimumNumberOfTouches = 1
+            fingerPan.maximumNumberOfTouches = 1
+            fingerPan.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
+            fingerPan.delegate = self
+            fingerPan.cancelsTouchesInView = true
+            fingerPan.isEnabled = parent.fingerPans
+            canvas.addGestureRecognizer(fingerPan)
+            self.fingerPan = fingerPan
 
             // 两指点击 = 撤销，三指点击 = 重做（照 Notability 的手势，不拿笔也能用）
             let undoTap = UITapGestureRecognizer(target: self, action: #selector(handleUndoTap(_:)))
@@ -429,6 +450,25 @@ struct DrawingCanvas: UIViewRepresentable {
         @objc private func handleDoubleTap(_ gesture: UITapGestureRecognizer) {
             guard let canvas, let onDoubleTap = parent.onDoubleTap else { return }
             onDoubleTap(normalizedLocation(gesture.location(in: canvas), in: canvas))
+        }
+
+        // MARK: 单指拖动页面
+
+        @objc private func handleFingerPan(_ gesture: UIPanGestureRecognizer) {
+            guard let canvas else { return }
+            switch gesture.state {
+            case .began:
+                lastTranslation = .zero
+            case .changed:
+                let current = gesture.translation(in: canvas)
+                let delta = CGSize(width: current.x - lastTranslation.x,
+                                   height: current.y - lastTranslation.y)
+                lastTranslation = current
+                parent.onFingerPan?(delta)
+            default:
+                lastTranslation = .zero
+                parent.onFingerPanEnd?()
+            }
         }
 
         // MARK: 两指撤销 / 三指重做
@@ -500,6 +540,14 @@ struct DrawingCanvas: UIViewRepresentable {
             true
         }
 
+        /// 单指拖动只在「手指=拖动」时生效，其余手势照旧
+        func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+            if gestureRecognizer === fingerPan {
+                return parent.fingerPans && parent.onFingerPan != nil
+            }
+            return true
+        }
+
         func applyProgrammatic(_ drawing: PKDrawing, notify: Bool = true) {
             guard let canvas else { return }
             isProgrammatic = true
@@ -515,9 +563,10 @@ struct DrawingCanvas: UIViewRepresentable {
 
         func canvasViewDrawingDidChange(_ canvasView: PKCanvasView) {
             guard !isProgrammatic else { return }
-            let drawing = canvasView.drawing
-            parent.controller.record(previous: parent.controller.currentDrawing, current: drawing)
-            parent.onChange(drawing)
+            // 书写过程中这个回调会连续触发，每次都 dataRepresentation + 落盘会卡住主线程，
+            // 表现为「盯着手指写，笔迹写到一半就断了」。这里合并成 0.25 秒写一次，
+            // 撤销步骤则按「一笔 / 一次擦除」在抬笔时记录。
+            scheduleSave(canvasView)
             scheduleShapeSnap(in: canvasView)
         }
 
@@ -525,38 +574,73 @@ struct DrawingCanvas: UIViewRepresentable {
 
         func canvasViewDidBeginUsingTool(_ canvasView: PKCanvasView) {
             strokesBeforeTool = canvasView.drawing.strokes.count
+            drawingBeforeTool = canvasView.drawing
+            isUsingTool = true
             cancelPendingSnap()
         }
 
         func canvasViewDidEndUsingTool(_ canvasView: PKCanvasView) {
-            if isDashed {
-                applyDashes(in: canvasView)
+            isUsingTool = false
+            let before = drawingBeforeTool ?? canvasView.drawing
+            drawingBeforeTool = nil
+
+            var result = canvasView.drawing
+            if isDashed, let dashed = makeDashed(canvasView) {
+                result = dashed
+                parent.controller.record(previous: before, current: result)
+                applyProgrammatic(result, notify: false)
+            } else {
+                parent.controller.record(previous: before, current: result)
             }
-            parent.onStrokeCommitted?(canvasView.drawing.strokes.count)
+
+            flushSave(result)
+            parent.onStrokeCommitted?(result.strokes.count)
+            scheduleShapeSnap(in: canvasView)
         }
 
         /// 虚线笔：PencilKit 没有原生虚线 ink，落笔后把这一笔按弧长切成若干短段
-        private func applyDashes(in canvasView: PKCanvasView) {
+        private func makeDashed(_ canvasView: PKCanvasView) -> PKDrawing? {
             let strokes = canvasView.drawing.strokes
-            guard strokes.count > strokesBeforeTool else { return }
-            let range = strokesBeforeTool..<strokes.count
+            guard strokes.count > strokesBeforeTool else { return nil }
 
             let width = max(parent.dashWidth, 1)
             let updated = DashRenderer.apply(to: canvasView.drawing,
-                                             range: range,
+                                             range: strokesBeforeTool..<strokes.count,
                                              dash: width * 2.6,
                                              gap: width * 1.9)
-            guard updated.strokes.count != strokes.count else { return }
+            guard updated.strokes.count != strokes.count else { return nil }
+            return updated
+        }
 
-            parent.controller.record(previous: canvasView.drawing, current: updated)
-            applyProgrammatic(updated)
+        // MARK: 落盘（合并写入）
+
+        private func scheduleSave(_ canvasView: PKCanvasView) {
+            pendingSave?.cancel()
+            let work = DispatchWorkItem { [weak self, weak canvasView] in
+                guard let self, let canvasView else { return }
+                self.parent.onChange(canvasView.drawing)
+            }
+            pendingSave = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: work)
+        }
+
+        private func flushSave(_ drawing: PKDrawing) {
+            pendingSave?.cancel()
+            pendingSave = nil
+            parent.onChange(drawing)
+        }
+
+        func cancelPendingSave() {
+            pendingSave?.cancel()
+            pendingSave = nil
         }
 
         // MARK: 形状识别
 
         private func scheduleShapeSnap(in canvasView: PKCanvasView) {
             pendingSnap?.cancel()
-            guard parent.shapeRecognition, parent.isShapeEligible else { return }
+            // 正在书写时不判形状：回填 drawing 会把当前这一笔打断
+            guard parent.shapeRecognition, parent.isShapeEligible, !isUsingTool else { return }
 
             let work = DispatchWorkItem { [weak self, weak canvasView] in
                 guard let self, let canvasView else { return }
