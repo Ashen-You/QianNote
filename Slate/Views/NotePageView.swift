@@ -69,6 +69,13 @@ struct NotePageView: View {
             background
 
             imageVisualLayer
+                .sheet(item: $croppingItem) { item in
+                    if let ui = store.image(noteID: note.id, fileName: item.fileName) {
+                        ImageCropperView(image: ui) { cropped, cropRect in
+                            applyCrop(item: item, cropped: cropped, cropRect: cropRect)
+                        }
+                    }
+                }
 
             DrawingCanvas(pageID: pageID,
                           initialDrawing: store.drawing(noteID: note.id, pageID: pageID),
@@ -128,13 +135,6 @@ struct NotePageView: View {
                     if let index = page.textBoxes.firstIndex(where: { $0.id == updated.id }) {
                         page.textBoxes[index] = updated
                     }
-                }
-            }
-        }
-        .sheet(item: $croppingItem) { item in
-            if let ui = store.image(noteID: note.id, fileName: item.fileName) {
-                ImageCropperView(image: ui) { cropped, cropRect in
-                    applyCrop(item: item, cropped: cropped, cropRect: cropRect)
                 }
             }
         }

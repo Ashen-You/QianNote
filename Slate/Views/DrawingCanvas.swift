@@ -789,14 +789,14 @@ enum InkSelectionEngine {
             let points = Array(stroke.path).map { $0.location.applying(stroke.transform) }
             guard points.count >= 2 else { continue }
 
-            let stride = max(1, points.count / 16)
+            let sampleStep = max(1, points.count / 16)
             var inside = 0
             var counted = 0
             var cursor = 0
             while cursor < points.count {
                 if contains(polygon, points[cursor]) { inside += 1 }
                 counted += 1
-                cursor += stride
+                cursor += sampleStep
             }
             guard counted > 0 else { continue }
             let ratio = Double(inside) / Double(counted)

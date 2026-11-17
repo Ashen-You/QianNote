@@ -104,7 +104,16 @@ final class DocumentImporter: NSObject {
 
         let data: Data
         do {
-            data = try await view.createPDF(configuration: WKPDFConfiguration())
+            data = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Data, Error>) in
+                view.createPDF(configuration: WKPDFConfiguration()) { result in
+                    switch result {
+                    case .success(let pdfData):
+                        continuation.resume(returning: pdfData)
+                    case .failure(let error):
+                        continuation.resume(throwing: error)
+                    }
+                }
+            }
         } catch {
             cleanup()
             throw DocumentImportError.renderFailed
