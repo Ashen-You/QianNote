@@ -21,7 +21,9 @@ final class NoteStore: ObservableObject {
 
     @Published private(set) var notes: [Note] = []
     @Published private(set) var folders: [Folder] = []
-    @Published private(set) var thumbnailRevision: Int = 0
+    /// 每页独立的版本号。旧版是一个全局 `Int`，任何一页刷新都会让所有缩略图单元格重跑，
+    /// 而且分不清「哪一页变了」。按页记版本后，只有真正更新的那一页会重新取图。
+    @Published private(set) var thumbnailVersions: [UUID: Int] = [:]
     @Published var errorMessage: String?
 
     // MARK: 存储位置
@@ -31,6 +33,10 @@ final class NoteStore: ObservableObject {
     private let notesURL: URL
     private let indexURL: URL
     private let ioQueue = DispatchQueue(label: "com.slate.store.io", qos: .utility)
+    /// 缩略图渲染单独一条队列。
+    /// 之前和落盘共用一条串行 ioQueue：书写时每 0.25 秒的保存都排在它前面，
+    /// 缩略图那几十毫秒只能等着，表现就是「明明停了笔，缩略图还是不动」。
+    private let thumbnailQueue = DispatchQueue(label: "com.slate.store.thumbnail", qos: .userInitiated)
 
     // MARK: 缓存
 
@@ -41,7 +47,14 @@ final class NoteStore: ObservableObject {
     private var pdfDocuments: [UUID: PDFDocument] = [:]
 
     private var saveTask: Task<Void, Never>?
+    /// 排队等待渲染的缩略图（每页最多一个，避免书写时堆积）
     private var thumbnailWork: [UUID: DispatchWorkItem] = [:]
+    /// 上一次渲染完成的时刻，用来节流
+    private var lastThumbnailAt: [UUID: Date] = [:]
+    /// 正在后台渲染的页
+    private var thumbnailInFlight: Set<UUID> = []
+    /// 底稿缓存（纸张 / PDF 页），书写时这层不变，重画纯属浪费
+    private let baseLayerCache = NSCache<NSString, UIImage>()
     private var lastUpdateBump: [UUID: Date] = [:]
 
     /// 墨迹落盘的「代」计数：只让最新的快照落盘，中间版本直接跳过
@@ -73,6 +86,7 @@ final class NoteStore: ObservableObject {
         thumbnailCache.countLimit = 400
         pdfPageCache.countLimit = 80
         imageCache.countLimit = 120
+        baseLayerCache.countLimit = 200
 
         try? FileManager.default.createDirectory(at: notesURL, withIntermediateDirectories: true)
         load()
@@ -305,6 +319,8 @@ final class NoteStore: ObservableObject {
             let target = index.map { min(max($0 + 1, 0), note.pages.count) } ?? note.pages.count
             note.pages.insert(NotePage(), at: target)
         }
+        // 页面顺序变了，PDF 页序跟着错位，底稿缓存整本作废（条目本身也很便宜）
+        baseLayerCache.removeAllObjects()
     }
 
     func duplicatePage(noteID: UUID, at index: Int) {
@@ -324,6 +340,7 @@ final class NoteStore: ObservableObject {
         update(noteID) { note in
             note.pages.insert(copy, at: min(index + 1, note.pages.count))
         }
+        baseLayerCache.removeAllObjects()
     }
 
     func deletePage(noteID: UUID, at index: Int) {
@@ -333,8 +350,15 @@ final class NoteStore: ObservableObject {
         let page = note.pages[index]
 
         update(noteID) { $0.pages.remove(at: index) }
+        baseLayerCache.removeAllObjects()
 
         drawingCache[page.id] = nil
+        thumbnailWork[page.id]?.cancel()
+        thumbnailWork[page.id] = nil
+        thumbnailInFlight.remove(page.id)
+        lastThumbnailAt[page.id] = nil
+        thumbnailCache.removeObject(forKey: page.id.uuidString as NSString)
+        thumbnailVersions[page.id] = nil
         let drawingFile = drawingURL(noteID: noteID, pageID: page.id)
         let thumbFile = thumbnailURL(noteID: noteID, pageID: page.id)
         ioQueue.async {
@@ -353,6 +377,7 @@ final class NoteStore: ObservableObject {
             let page = note.pages.remove(at: source)
             note.pages.insert(page, at: destination)
         }
+        baseLayerCache.removeAllObjects()
     }
 
     func clearPage(noteID: UUID, pageID: UUID) {
@@ -364,6 +389,8 @@ final class NoteStore: ObservableObject {
             note.paperTemplate = template
             note.paperTint = tint
         }
+        // 底稿缓存里存的是旧纸张，整本作废
+        baseLayerCache.removeAllObjects()
     }
 
     func updatePage(noteID: UUID, pageID: UUID, _ mutate: (inout NotePage) -> Void) {
@@ -413,7 +440,7 @@ final class NoteStore: ObservableObject {
             try? data.write(to: url, options: .atomic)
         }
 
-        scheduleThumbnail(noteID: noteID, pageID: pageID)
+        requestThumbnail(noteID: noteID, pageID: pageID)
         bumpUpdated(noteID)
     }
 
@@ -428,24 +455,47 @@ final class NoteStore: ObservableObject {
 
     // MARK: - 缩略图
 
-    private func scheduleThumbnail(noteID: UUID, pageID: UUID) {
-        thumbnailWork[pageID]?.cancel()
+    /// 连续书写时两次渲染的最小间隔
+    private static let minThumbnailInterval: TimeInterval = 0.9
+    /// 一次渲染最早多久之后启动（等落盘的 0.25 秒消抖先跑完）
+    private static let thumbnailStartDelay: TimeInterval = 0.15
+
+    /// 请求刷新某一页的缩略图。
+    ///
+    /// 旧版是「每次落盘都把定时器重置到 1.2 秒之后」——一直在写就永远不刷新，
+    /// 抬笔之后还得再等 1.2 秒 + 一次整页渲染，所以看起来半天不动。
+    /// 现在换成节流而不是消抖：
+    /// 1) 距上一次渲染已经超过 `minThumbnailInterval` → 0.15 秒后立刻补一版，抬笔几乎马上看到更新；
+    /// 2) 正在连续书写 → 最多每 0.9 秒出一版，不会因为请求不断而被无限推迟。
+    private func requestThumbnail(noteID: UUID, pageID: UUID) {
+        // 已经在渲染 / 已经排好队，就不要再插一个：结束时会按墨迹代计数自己补新版
+        guard !thumbnailInFlight.contains(pageID), thumbnailWork[pageID] == nil else { return }
+
+        let now = Date()
+        var delay = Self.thumbnailStartDelay
+        if let last = lastThumbnailAt[pageID] {
+            delay = max(Self.thumbnailStartDelay,
+                        Self.minThumbnailInterval - now.timeIntervalSince(last))
+        }
+
         let work = DispatchWorkItem { [weak self] in
-            Task { @MainActor in
-                self?.generateThumbnail(noteID: noteID, pageID: pageID)
-            }
+            self?.thumbnailWork[pageID] = nil
+            self?.generateThumbnail(noteID: noteID, pageID: pageID)
         }
         thumbnailWork[pageID] = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2, execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
 
-    func generateThumbnail(noteID: UUID, pageID: UUID) {
+    private func generateThumbnail(noteID: UUID, pageID: UUID) {
         guard let note = note(id: noteID),
               let pageIndex = note.pages.firstIndex(where: { $0.id == pageID }) else { return }
 
+        // 墨迹直接从内存缓存取（saveDrawing 里已经同步写过一份），不要在后台线程碰字典
         let drawing = drawing(noteID: noteID, pageID: pageID)
+        let generation = drawingGenerationValue(pageID)
         let pdf = pdfDocument(for: noteID)
-        // 图片资源先在主线程取（走内存缓存），渲染本身必须离开主线程：
+
+        // 图片资源也先在主线程取（走内存缓存），渲染本身必须离开主线程：
         // 整页「纸张 + PDF + 墨迹」合成实测要 1.5 秒，放在主线程等于每写一会儿就冻住一次，
         // PencilKit 收不到触摸点，笔迹就断在半路。
         var images: [String: UIImage] = [:]
@@ -454,48 +504,118 @@ final class NoteStore: ObservableObject {
                 images[item.fileName] = image
             }
         }
+
+        // 缩略图最宽 520pt；墨迹按输出比例栅格化（以前固定 1 倍再缩小，等于白算 4 倍像素）
+        let maxWidth: CGFloat = 520
+        let inkScale = min(1, PageRenderer.outputScale(note: note, maxWidth: maxWidth))
+        let baseKey = baseLayerKey(noteID: noteID, pageID: pageID, pageIndex: pageIndex,
+                                   note: note, maxWidth: maxWidth) as NSString
+        let cachedBase = baseLayerCache.object(forKey: baseKey)
         let url = thumbnailURL(noteID: noteID, pageID: pageID)
 
-        ioQueue.async { [weak self] in
-            // 缩略图最宽 520pt，墨迹按 1 倍栅格化即可（原来固定 2 倍，白算 4 倍像素）
+        lastThumbnailAt[pageID] = Date()
+        thumbnailInFlight.insert(pageID)
+
+        thumbnailQueue.async { [weak self] in
+            let base = cachedBase ?? PageRenderer.renderBase(note: note,
+                                                            pageIndex: pageIndex,
+                                                            pdf: pdf,
+                                                            maxWidth: maxWidth)
             let rendered = PageRenderer.renderPage(note: note,
                                                    pageIndex: pageIndex,
                                                    drawing: drawing,
                                                    pdf: pdf,
-                                                   maxWidth: 520,
-                                                   inkScale: 1,
+                                                   maxWidth: maxWidth,
+                                                   inkScale: inkScale,
+                                                   baseLayer: base,
                                                    imageLoader: { images[$0] })
-            let data = rendered.pngData()
-            if let data {
+            if let data = rendered.pngData() {
                 try? data.write(to: url, options: .atomic)
             }
+
             Task { @MainActor in
-                self?.thumbnailCache.setObject(rendered, forKey: pageID.uuidString as NSString)
-                self?.thumbnailRevision += 1
+                guard let self else { return }
+                self.thumbnailInFlight.remove(pageID)
+                if cachedBase == nil {
+                    self.baseLayerCache.setObject(base, forKey: baseKey)
+                }
+                self.thumbnailCache.setObject(rendered, forKey: pageID.uuidString as NSString)
+                self.thumbnailVersions[pageID, default: 0] += 1
+
+                // 渲染这段时间里又写了新墨迹：再补一版，别让缩略图停在上一笔
+                if self.drawingGenerationValue(pageID) != generation {
+                    self.requestThumbnail(noteID: noteID, pageID: pageID)
+                }
             }
         }
     }
 
-    /// 返回缩略图：只读内存缓存 / 磁盘，**不同步渲染**。
-    /// 这个函数是在 SwiftUI body 里被调用的，同步渲染整页实测要 1.5 秒，
-    /// 会直接把书写和滚动卡死；没有现成图片时丢给后台补一张，这次先返回 nil。
-    func ensureThumbnail(noteID: UUID, pageID: UUID?) -> UIImage? {
+    private func baseLayerKey(noteID: UUID, pageID: UUID, pageIndex: Int,
+                              note: Note, maxWidth: CGFloat) -> String {
+        // 模板 / 底色 / 尺寸 / PDF 页序任何一项变了，底稿就得重画
+        [
+            noteID.uuidString,
+            pageID.uuidString,
+            String(pageIndex),
+            note.paperTemplate.rawValue,
+            note.paperTint.rawValue,
+            String(Int(note.pageSize.width)),
+            String(Int(note.pageSize.height)),
+            String(Int(maxWidth))
+        ].joined(separator: "-")
+    }
+
+    private func drawingGenerationValue(_ pageID: UUID) -> Int {
+        drawingLock.lock()
+        defer { drawingLock.unlock() }
+        return drawingGeneration[pageID] ?? 0
+    }
+
+    /// 取缩略图（异步）：内存缓存 → 磁盘 → 都没有就返回 nil 并安排后台补一张。
+    ///
+    /// 旧版是同步 `Data(contentsOf:)` + `UIImage(data:)`，而它是在 SwiftUI 的 `.task` / body 里被调用的。
+    /// 一屏十几张卡片就是十几次主线程磁盘读 + 图片解码，进入编辑页、回到书架时都会有明显停顿。
+    func thumbnail(noteID: UUID, pageID: UUID?) async -> UIImage? {
         guard let pageID else { return nil }
 
         if let cached = thumbnailCache.object(forKey: pageID.uuidString as NSString) {
             return cached
         }
+
         let url = thumbnailURL(noteID: noteID, pageID: pageID)
-        if let data = try? Data(contentsOf: url), let image = UIImage(data: data) {
-            thumbnailCache.setObject(image, forKey: pageID.uuidString as NSString)
-            return image
+        let stored: UIImage? = await withCheckedContinuation { continuation in
+            thumbnailQueue.async {
+                guard let data = try? Data(contentsOf: url) else {
+                    continuation.resume(returning: nil)
+                    return
+                }
+                continuation.resume(returning: Self.decodedImage(data))
+            }
         }
-        scheduleThumbnail(noteID: noteID, pageID: pageID)
+
+        if let stored {
+            thumbnailCache.setObject(stored, forKey: pageID.uuidString as NSString)
+            return stored
+        }
+
+        requestThumbnail(noteID: noteID, pageID: pageID)
         return nil
     }
 
-    func invalidateThumbnail(pageID: UUID) {
+    /// 磁盘上的 PNG 是延迟解码的，交给 SwiftUI 首次绘制时才解会掉帧；这里先解一遍
+    private static func decodedImage(_ data: Data) -> UIImage? {
+        guard let image = UIImage(data: data) else { return nil }
+        let format = UIGraphicsImageRendererFormat.default()
+        format.scale = image.scale
+        format.opaque = true
+        return UIGraphicsImageRenderer(size: image.size, format: format).image { _ in
+            image.draw(in: CGRect(origin: .zero, size: image.size))
+        }
+    }
+
+    func invalidateThumbnail(noteID: UUID, pageID: UUID) {
         thumbnailCache.removeObject(forKey: pageID.uuidString as NSString)
+        requestThumbnail(noteID: noteID, pageID: pageID)
     }
 
     // MARK: - PDF

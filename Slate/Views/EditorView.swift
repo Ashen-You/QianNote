@@ -1003,7 +1003,7 @@ struct EditorView: View {
     private func applyPaper(template: PaperTemplate, tint: PaperTint) {
         store.setPaper(noteID: noteID, template: template, tint: tint)
         for page in note?.pages ?? [] {
-            store.invalidateThumbnail(pageID: page.id)
+            store.invalidateThumbnail(noteID: noteID, pageID: page.id)
         }
     }
 

@@ -117,11 +117,12 @@ private struct PageThumbnailCell: View {
         }
         .contentShape(Rectangle())
         .task(id: taskKey) {
-            image = store.ensureThumbnail(noteID: note.id, pageID: page.id)
+            image = await store.thumbnail(noteID: note.id, pageID: page.id)
         }
     }
 
+    /// 只跟着「自己这一页」的版本号走：别的页面刷新不该让这张单元格重跑
     private var taskKey: String {
-        "\(store.thumbnailRevision)-\(page.id.uuidString)"
+        "\(store.thumbnailVersions[page.id] ?? 0)-\(page.id.uuidString)"
     }
 }

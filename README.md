@@ -181,7 +181,7 @@ Documents/Slate/
 
 - 元数据用 `Codable` + JSON（ISO8601 日期），改动后 0.7 秒防抖落盘
 - 每页墨迹单独存文件，边写边增量保存，避免大文件重写
-- 缩略图在停笔 1.2 秒后后台重绘
+- 缩略图节流刷新：抬笔后约 0.15 秒补一版，连续书写期间最多每 0.9 秒一版（渲染在独立队列，底稿层带缓存）
 
 > 工程开启了 `UIFileSharingEnabled`，可在「文件」App 里直接查看/拷贝这些数据。
 
@@ -194,7 +194,11 @@ Documents/Slate/
 - **无笔手势**：两指/三指 `UITapGestureRecognizer` 挂在画布上。指写模式下两根手指落下可能先留两个点，所以第二指落下时记下「撤销栈深度 + 笔画数」，识别成手势后用 `truncateHistory` 丢掉这几步、只清理点状笔迹，再执行撤销/重做。
 - **墨迹归属**：`DrawingCanvas.Coordinator` 记着「画布上这份墨迹属于哪一页」（`ownerPageID` + `ownerSave`）。落盘走 `saveToOwner`，而不是用 `parent.onChange` —— 换页时 `parent` 已经换成新页了，用它落盘会把上一页的笔迹写进下一页的文件，两页互相串墨迹（表现为「下一页的笔记跑到上一页去了」）。
 - **落盘节流**：`canvasViewDrawingDidChange` 在书写过程中会连续回调，逐次 `dataRepresentation()` 会卡住主线程（笔迹写到一半就断）。现在按 0.25 秒合并写一次，**编码与写盘都在 `ioQueue` 上做**，并用「代」计数丢掉过期快照；抬笔时 `flushSave` 立即落盘，画布回收时 `dismantleUIView` 再兜一次底。
-- **缩略图必须后台渲染（血泪教训）**：整页「纸张 + PDF + 墨迹」合成实测要 **1.5 秒**。之前它在 `@MainActor` 上跑，写一会儿停 1.2 秒就会冻住一次，PencilKit 收不到触摸点，笔画直接断在半路——看起来就像「笔迹被截断」。现在渲染、`pngData()` 全在 `ioQueue`，主线程只做缓存回填；`ensureThumbnail` 也不再同步渲染（缓存没有就先返回 nil，让后台补）。
+- **缩略图必须后台渲染（血泪教训）**：整页「纸张 + PDF + 墨迹」合成实测要 **1.5 秒**。之前它在 `@MainActor` 上跑，写一会儿停 1.2 秒就会冻住一次，PencilKit 收不到触摸点，笔画直接断在半路——看起来就像「笔迹被截断」。现在渲染、`pngData()` 全在**独立的 `thumbnailQueue`**（不和落盘共用串行队列，否则保存的编码会排在它前面），主线程只做缓存回填。
+- **缩略图刷新要「节流」而不是「消抖」**：旧实现每次落盘都把定时器重置到 1.2 秒后 —— 一直在写就永远不出新图，抬笔后还要再等 1.2 秒 + 一次整页渲染。现在按「距上次渲染多久」决定延迟：超过 0.9 秒就 0.15 秒后立刻补一版，书写期间最多每 0.9 秒一版；渲染期间又有新墨迹时，靠「墨迹代计数」比对自动再补一版（实测连续书写时刷新间隔 0.9–1.0 秒，`base=hit` 单次渲染 23–46ms）。
+- **底稿层单独缓存**：`PageRenderer.renderBase` 只画纸张 / PDF 页，`renderPage(baseLayer:)` 直接贴图。书写过程中这层是常量，缓存后省掉整页 PDF 的矢量重绘（冷渲染 990ms → 23–46ms，Debug 模拟器实测）。纸张模板、底色、页面顺序一变就整本作废。缩略图的墨迹改为按输出比例栅格化（`inkScale = 520 / 页宽`），不再「按 1 倍画满页再缩小」，白算 4 倍像素。
+- **缩略图取图必须异步**：`thumbnail(noteID:pageID:)` 是 async 的，磁盘读 + 预解码都在 `thumbnailQueue` 上。旧版在 SwiftUI `.task`/body 里同步 `Data(contentsOf:)` + `UIImage(data:)`，一屏十几张卡片就是十几次主线程 IO，进编辑页和回书架时都会顿一下。
+
 - **画布视口钉死**：`PKCanvasView` 是 `UIScrollView`，墨迹超出边界时它自己会撑大 `contentSize`，`contentOffset` 一非 0，整个墨迹层就相对纸张平移（纸张是 SwiftUI 画的、墨迹是 UIKit 画的，两边一错位就像被竖线切掉）。`TrackingCanvasView.layoutSubviews` 里把 `contentSize`/`contentOffset` 钉在 `bounds` 上。
 - **书写中不改 drawing**：撤销、换页、外部改色都可能撞上「笔还没离纸」的时刻，此时替换 `canvas.drawing` 会把当前这一笔整段抹掉。`applyProgrammatic` 现在遇到 `isUsingTool` 只入队，抬笔后再应用。
 - **纯手拖**：单指 `UIPanGestureRecognizer`（`allowedTouchTypes = .direct`，只吃手指不吃 Pencil）只在「手指=拖动」时启用；位移按 `fit × zoom` 换算成屏幕点，1× 时累积超过 84pt 就翻页。

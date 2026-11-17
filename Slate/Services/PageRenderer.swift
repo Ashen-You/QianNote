@@ -95,20 +95,23 @@ enum PageRenderer {
 
     // MARK: - 页面合成
 
-    static func renderPage(note: Note,
+    /// 输出的缩放比例：`maxWidth` 为空或比页面还宽时按 1 倍
+    static func outputScale(note: Note, maxWidth: CGFloat?) -> CGFloat {
+        let pageWidth = note.pageSize.width
+        guard let maxWidth, maxWidth > 0, maxWidth < pageWidth else { return 1 }
+        return maxWidth / pageWidth
+    }
+
+    /// 只画底稿（纸张 / PDF 页），不含墨迹、图片、文本框。
+    /// 缩略图每次重画都用得着这一层，而它在书写过程中是常量，缓存下来能省掉整页 PDF 的矢量绘制。
+    static func renderBase(note: Note,
                            pageIndex: Int,
-                           drawing: PKDrawing,
                            pdf: PDFDocument?,
-                           maxWidth: CGFloat? = nil,
-                           inkScale: CGFloat = 2,
-                           imageLoader: ((String) -> UIImage?)? = nil) -> UIImage {
+                           maxWidth: CGFloat?) -> UIImage {
         let pageSize = note.pageSize
-        let outputScale: CGFloat = {
-            guard let maxWidth, maxWidth > 0, maxWidth < pageSize.width else { return 1 }
-            return maxWidth / pageSize.width
-        }()
-        let outputSize = CGSize(width: max(1, pageSize.width * outputScale),
-                                height: max(1, pageSize.height * outputScale))
+        let scale = outputScale(note: note, maxWidth: maxWidth)
+        let outputSize = CGSize(width: max(1, pageSize.width * scale),
+                                height: max(1, pageSize.height * scale))
 
         let format = UIGraphicsImageRendererFormat.default()
         format.scale = 1
@@ -117,9 +120,41 @@ enum PageRenderer {
         return UIGraphicsImageRenderer(size: outputSize, format: format).image { context in
             let cg = context.cgContext
             cg.saveGState()
-            cg.scaleBy(x: outputScale, y: outputScale)
-
+            cg.scaleBy(x: scale, y: scale)
             drawContent(note: note, pageIndex: pageIndex, pdf: pdf, in: cg, size: pageSize)
+            cg.restoreGState()
+        }
+    }
+
+    /// - Parameter baseLayer: 已缓存的底稿图（`renderBase` 的产物）。传入时直接贴图，
+    ///   省掉重画纸张线 / PDF 页的时间。
+    static func renderPage(note: Note,
+                           pageIndex: Int,
+                           drawing: PKDrawing,
+                           pdf: PDFDocument?,
+                           maxWidth: CGFloat? = nil,
+                           inkScale: CGFloat = 2,
+                           baseLayer: UIImage? = nil,
+                           imageLoader: ((String) -> UIImage?)? = nil) -> UIImage {
+        let pageSize = note.pageSize
+        let pageScale = outputScale(note: note, maxWidth: maxWidth)
+        let outputSize = CGSize(width: max(1, pageSize.width * pageScale),
+                                height: max(1, pageSize.height * pageScale))
+
+        let format = UIGraphicsImageRendererFormat.default()
+        format.scale = 1
+        format.opaque = true
+
+        return UIGraphicsImageRenderer(size: outputSize, format: format).image { context in
+            let cg = context.cgContext
+            cg.saveGState()
+            cg.scaleBy(x: pageScale, y: pageScale)
+
+            if let baseLayer {
+                baseLayer.draw(in: CGRect(origin: .zero, size: pageSize))
+            } else {
+                drawContent(note: note, pageIndex: pageIndex, pdf: pdf, in: cg, size: pageSize)
+            }
             drawImages(note: note, pageIndex: pageIndex, loader: imageLoader, size: pageSize)
 
             if let ink = inkImage(drawing: drawing, size: pageSize, scale: inkScale) {

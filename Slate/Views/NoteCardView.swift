@@ -13,12 +13,14 @@ struct NoteCardView: View {
             info
         }
         .task(id: taskKey) {
-            thumbnail = store.ensureThumbnail(noteID: note.id, pageID: note.pages.first?.id)
+            thumbnail = await store.thumbnail(noteID: note.id, pageID: note.pages.first?.id)
         }
     }
 
     private var taskKey: String {
-        "\(store.thumbnailRevision)-\(note.id.uuidString)-\(note.updatedAt.timeIntervalSince1970)"
+        let firstPage = note.pages.first?.id
+        let version = firstPage.flatMap { store.thumbnailVersions[$0] } ?? 0
+        return "\(version)-\(note.id.uuidString)-\(note.updatedAt.timeIntervalSince1970)"
     }
 
     private var preview: some View {
