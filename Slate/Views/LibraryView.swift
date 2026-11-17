@@ -13,6 +13,8 @@ struct LibraryView: View {
     @State private var favoritesOnly = false
     @State private var sortOption: SortOption = .updated
     @State private var showImporter = false
+    @State private var showIconPicker = false
+    @StateObject private var iconManager = AppIconManager()
 
     @State private var prompt: LibraryPrompt?
     @State private var promptText = ""
@@ -85,9 +87,24 @@ struct LibraryView: View {
             .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .always), prompt: "搜索笔记标题")
             .toolbar {
                 ToolbarItemGroup(placement: .topBarTrailing) {
+                    Button {
+                        showIconPicker = true
+                    } label: {
+                        Image(systemName: "app.badge")
+                    }
+                    .help("更换 App 图标")
                     sortMenu
                     addMenu
                 }
+            }
+            .sheet(isPresented: $showIconPicker) {
+                AppIconPicker(manager: iconManager)
+            }
+            .alert("提示", isPresented: Binding(get: { iconManager.errorMessage != nil },
+                                                set: { if !$0 { iconManager.errorMessage = nil } })) {
+                Button("好", role: .cancel) { iconManager.errorMessage = nil }
+            } message: {
+                Text(iconManager.errorMessage ?? "")
             }
             .navigationDestination(for: UUID.self) { id in
                 EditorView(noteID: id)

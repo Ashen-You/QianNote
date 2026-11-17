@@ -216,3 +216,76 @@ struct ErrorBanner: View {
     }
 }
 
+// MARK: - 更换 App 图标
+
+struct AppIconPicker: View {
+    @ObservedObject var manager: AppIconManager
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 14) {
+                Text("选一个图标。切换时 iOS 会弹确认框，主屏幕图标随即更换。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 24)
+                    .padding(.top, 4)
+
+                HStack(alignment: .top, spacing: 18) {
+                    ForEach(AppIconChoice.allCases) { choice in
+                        iconCard(choice)
+                    }
+                }
+                .padding(.horizontal, 20)
+
+                Spacer()
+            }
+            .navigationTitle("App 图标")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("完成") { dismiss() }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func iconCard(_ choice: AppIconChoice) -> some View {
+        let selected = manager.current == choice
+        Button {
+            manager.select(choice)
+        } label: {
+            VStack(spacing: 10) {
+                Image(choice.thumbName)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: .infinity)
+                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .strokeBorder(selected ? Theme.accent : Color.clear, lineWidth: 3)
+                    )
+                Text(choice.title)
+                    .font(.subheadline.weight(.medium))
+                HStack(spacing: 4) {
+                    if selected {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(Theme.accent)
+                        Text("使用中")
+                    } else {
+                        Text("点击切换")
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(selected ? Theme.accent : .secondary)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(12)
+            .slateGlassPanel(cornerRadius: Theme.cardCorner)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
