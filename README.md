@@ -189,6 +189,7 @@ Documents/Slate/
 - **画布代理（易踩的坑）**：`makeUIView` 里必须 `canvas.delegate = coordinator`。`canvasViewDrawingDidChange` 是撤销栈、自动保存、形状识别、虚线切分、录音笔迹打点的**唯一入口**，代理没接上时这些功能会全部静默失效（表现为顶栏撤销/重做一直置灰）。
 - **撤销**：不依赖 `UndoManager`，而是 `CanvasController` 保存 `PKDrawing` 快照栈，撤销时整体回填并回写存储，行为稳定。
 - **无笔手势**：两指/三指 `UITapGestureRecognizer` 挂在画布上。指写模式下两根手指落下可能先留两个点，所以第二指落下时记下「撤销栈深度 + 笔画数」，识别成手势后用 `truncateHistory` 丢掉这几步、只清理点状笔迹，再执行撤销/重做。
+- **墨迹归属**：`DrawingCanvas.Coordinator` 记着「画布上这份墨迹属于哪一页」（`ownerPageID` + `ownerSave`）。落盘走 `saveToOwner`，而不是用 `parent.onChange` —— 换页时 `parent` 已经换成新页了，用它落盘会把上一页的笔迹写进下一页的文件，两页互相串墨迹（表现为「下一页的笔记跑到上一页去了」）。
 - **落盘节流**：`canvasViewDrawingDidChange` 在书写过程中会连续回调，逐次 `dataRepresentation()` 会卡住主线程（笔迹写到一半就断）。现在按 0.25 秒合并写一次，**编码与写盘都在 `ioQueue` 上做**，并用「代」计数丢掉过期快照；抬笔时 `flushSave` 立即落盘，画布回收时 `dismantleUIView` 再兜一次底。
 - **缩略图必须后台渲染（血泪教训）**：整页「纸张 + PDF + 墨迹」合成实测要 **1.5 秒**。之前它在 `@MainActor` 上跑，写一会儿停 1.2 秒就会冻住一次，PencilKit 收不到触摸点，笔画直接断在半路——看起来就像「笔迹被截断」。现在渲染、`pngData()` 全在 `ioQueue`，主线程只做缓存回填；`ensureThumbnail` 也不再同步渲染（缓存没有就先返回 nil，让后台补）。
 - **画布视口钉死**：`PKCanvasView` 是 `UIScrollView`，墨迹超出边界时它自己会撑大 `contentSize`，`contentOffset` 一非 0，整个墨迹层就相对纸张平移（纸张是 SwiftUI 画的、墨迹是 UIKit 画的，两边一错位就像被竖线切掉）。`TrackingCanvasView.layoutSubviews` 里把 `contentSize`/`contentOffset` 钉在 `bounds` 上。

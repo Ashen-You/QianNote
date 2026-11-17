@@ -283,11 +283,9 @@ struct DrawingCanvas: UIViewRepresentable {
         coordinator.toolKey = toolKey
         coordinator.isDashed = isDashed
 
-        controller.canvas = canvas
         controller.currentDrawing = initialDrawing
-        controller.onDrawingRestored = { [weak coordinator] drawing in
-            coordinator?.applyProgrammatic(drawing)
-        }
+        coordinator.ownerSave = onChange
+        coordinator.bind(controller: controller, to: canvas)
 
         coordinator.installGestures(on: canvas)
         coordinator.trackingCanvas = canvas as? TrackingCanvasView
@@ -311,9 +309,13 @@ struct DrawingCanvas: UIViewRepresentable {
             // 换页前先把当前墨迹落盘。之前这里直接换成新页的 drawing 且 notify=false，
             // 旧页最后 0.25 秒的笔迹既没保存、也没留在画布上，表现就是「写好的字少一截」。
             coordinator.flushCurrentDrawing()
+            // 落盘之后才把「这份墨迹属于哪一页」改成新页。
+            // 顺序反了的话，旧页的这一笔会被存进新页的文件里，两页开始互相串墨迹。
+            coordinator.ownerSave = onChange
             coordinator.currentPageID = pageID
             coordinator.toolKey = toolKey
             coordinator.cancelPendingSnap()
+            coordinator.bind(controller: controller, to: canvas)
             controller.currentDrawing = initialDrawing
             controller.resetHistory()
             coordinator.applyProgrammatic(initialDrawing, notify: false)
@@ -352,6 +354,12 @@ struct DrawingCanvas: UIViewRepresentable {
         var parent: DrawingCanvas
         weak var canvas: PKCanvasView?
         var currentPageID: UUID?
+        /// 画布上这份墨迹属于哪一页 —— 落盘该用的那个闭包。
+        /// 换页时 `parent` 会先被换成新页，若直接用 `parent.onChange` 落盘，
+        /// 旧页的最后一笔就会写进新页的文件，两页开始互相串墨迹。
+        var ownerSave: ((PKDrawing) -> Void)?
+        /// 当前和这块画布绑定的那一页的撤销栈，换页时要把旧的控制器的画布引用解绑
+        private weak var boundController: CanvasController?
         var toolKey: String = ""
         var drawingPolicy: PKCanvasViewDrawingPolicy = .default
         var isEnabled: Bool = true
@@ -385,6 +393,25 @@ struct DrawingCanvas: UIViewRepresentable {
         func cancelPendingSnap() {
             pendingSnap?.cancel()
             pendingSnap = nil
+        }
+
+        /// 把某一页的撤销栈绑到这块画布上。
+        /// 旧页必须解绑，否则它的撤销 / 改色会把旧页的墨迹 `applyProgrammatic` 到当前页的画布上。
+        func bind(controller newController: CanvasController, to canvas: PKCanvasView) {
+            if let old = boundController, old !== newController {
+                old.canvas = nil
+                old.onDrawingRestored = nil
+            }
+            boundController = newController
+            newController.canvas = canvas
+            newController.onDrawingRestored = { [weak self] drawing in
+                self?.applyProgrammatic(drawing)
+            }
+        }
+
+        /// 落盘到「这份墨迹真正属于的那一页」，而不是当前正在显示的页
+        private func saveToOwner(_ drawing: PKDrawing) {
+            (ownerSave ?? parent.onChange)(drawing)
         }
 
         // MARK: 双指手势（不抢占单指书写）
@@ -591,9 +618,9 @@ struct DrawingCanvas: UIViewRepresentable {
             isProgrammatic = true
             canvas.drawing = drawing
             (canvas as? TrackingCanvasView)?.pinViewport()
-            parent.controller.currentDrawing = drawing
+            (boundController ?? parent.controller).currentDrawing = drawing
             if notify {
-                parent.onChange(drawing)
+                saveToOwner(drawing)
             }
             DispatchQueue.main.async { [weak self] in
                 self?.isProgrammatic = false
@@ -665,7 +692,7 @@ struct DrawingCanvas: UIViewRepresentable {
             pendingSave?.cancel()
             let work = DispatchWorkItem { [weak self, weak canvasView] in
                 guard let self, let canvasView else { return }
-                self.parent.onChange(canvasView.drawing)
+                self.saveToOwner(canvasView.drawing)
             }
             pendingSave = work
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: work)
@@ -674,7 +701,7 @@ struct DrawingCanvas: UIViewRepresentable {
         private func flushSave(_ drawing: PKDrawing) {
             pendingSave?.cancel()
             pendingSave = nil
-            parent.onChange(drawing)
+            saveToOwner(drawing)
         }
 
         func cancelPendingSave() {

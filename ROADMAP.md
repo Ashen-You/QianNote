@@ -125,6 +125,13 @@
 - 🐞 书写中不替换 `canvas.drawing`：撤销 / 换页 / 外部改色撞上「笔还没离纸」会把当前笔整段抹掉，改为入队、抬笔后应用
 - 🐞 `PKCanvasView` 会随墨迹撑大 `contentSize`，`contentOffset` 非 0 时墨迹层相对纸张平移 → `layoutSubviews` 里钉死视口
 - 🐞 多点手势只数手指（`.direct`）：拿 Pencil 写时手掌压上去会被算成两指手势，抬笔就误撤销
+- 🐞 **换页串墨迹（下一页的笔记跑到上一页）**：`updateUIView` 里先 `coordinator.parent = self`（新页）再 `flushCurrentDrawing()`，
+  于是旧页那 0.25 秒还没落盘的笔迹被写进了新页的文件，`drawingCache` 同时被污染，之后每次加载都会看到别页的内容。
+  修复：Coordinator 记住 `ownerPageID/ownerSave`，所有落盘（合并保存 / 抬笔 flush / `dismantleUIView` / `applyProgrammatic`）
+  一律走 `saveToOwner`；换页顺序改成「先按旧页落盘、再改归属、再绑新页的撤销栈」。
+  A/B 实测：旧逻辑翻页后 p1=5 / p2=2（互相串），新逻辑 p1=2 / p2=5（各自独立）
+- 🐞 换页时旧页的 `CanvasController` 仍握着同一块画布（`canvas`/`onDrawingRestored`），它的撤销会把旧页墨迹画到当前页上；
+  现在 `bind(controller:to:)` 会先解绑旧控制器再绑新页
 - 🎨 「手指：书写 / 拖动」从颜色面板底部挪到**顶栏独立按钮**（手形图标，激活即拖动模式）+ ⋯ 菜单里的同名开关，不展开面板也能切
 - 🎨 工具面板从「占据布局宽度的 HStack 成员」改成**浮层盖在页面之上**：以前一展开就把画布挤窄、小屏时竖向内容还被直接切掉；
   现在用 `overlay(alignment: .leading)` + `ViewThatFits`（放不下才退化成可滚动），背后压一层左侧深、向右淡出的遮罩，不吃触摸
