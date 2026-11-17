@@ -723,7 +723,7 @@ private enum WelcomeContent {
         TextBox(text: "一款为 iPad 与 Apple Pencil 打造的手写笔记应用。",
                 x: 74, y: 196, width: 560, height: 40,
                 fontSize: 20, colorHex: "#4B4B52"),
-        TextBox(text: "左侧工具栏：钢笔、铅笔、荧光笔、橡皮、套索、文字\n底部：颜色与笔迹粗细\n右上角：撤销 / 重做、录音、页面缩略图、导出 PDF\n右侧缩略图栏底部 + 号可插入新页面",
+        TextBox(text: "左侧工具栏：钢笔、铅笔、荧光笔、橡皮、套索、文字\n工具面板：颜色与笔迹粗细（浮在页面上，不挤开纸张）\n右上角：撤销 / 重做、录音、缩略图、手指拖动、导出 PDF\n右侧缩略图栏底部 + 号可插入新页面",
                 x: 74, y: 300, width: 600, height: 190,
                 fontSize: 20, colorHex: "#1C1C1E"),
         TextBox(text: "现在，开始写点什么吧。",

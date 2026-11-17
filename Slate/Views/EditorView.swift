@@ -732,6 +732,13 @@ struct EditorView: View {
                 withAnimation(.easeInOut(duration: 0.2)) { continuous.toggle() }
             }
 
+            // 手指：书写 ↔ 拖动。独立按钮，和颜色/粗细面板解耦，不拿笔也能一指点到
+            IconButton(systemName: "hand.point.up.left",
+                       isActive: !tools.fingerDrawing,
+                       label: tools.fingerDrawing ? "手指：书写（点按切换为拖动）" : "手指：拖动页面") {
+                toggleFingerDrag()
+            }
+
             IconButton(systemName: "arrow.up.left.and.arrow.down.right",
                        isActive: false,
                        label: "全屏阅读") {
@@ -785,6 +792,10 @@ struct EditorView: View {
                     Label("清空当前页", systemImage: "eraser.line.dashed")
                 }
                 Divider()
+                Toggle(isOn: Binding(get: { !tools.fingerDrawing },
+                                     set: { tools.fingerDrawing = !$0 })) {
+                    Label("手指拖动页面", systemImage: "hand.point.up.left")
+                }
                 if note?.hasRecording == true {
                     Button(role: .destructive) {
                         audio.stop()
@@ -1172,6 +1183,15 @@ struct EditorView: View {
             UINotificationFeedbackGenerator().notificationOccurred(.warning)
             showToast("没有可重做的操作")
         }
+    }
+
+    /// 手指：书写 ↔ 拖动。放在顶栏单独一个按钮，不用展开颜色面板去翻
+    private func toggleFingerDrag() {
+        tools.fingerDrawing.toggle()
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        showToast(tools.fingerDrawing
+                  ? "手指：书写"
+                  : "手指：拖动页面（1× 时上下拖动翻页）")
     }
 
     private func showToast(_ text: String) {
