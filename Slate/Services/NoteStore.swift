@@ -88,7 +88,44 @@ final class NoteStore: ObservableObject {
         }
         notes = index.notes
         folders = index.folders
-        if notes.isEmpty { seed() }
+        if notes.isEmpty { seed() } else { sanitizeTextBoxes() }
+    }
+
+    /// 清理历史遗留的坏文字框：
+    /// 1) 空内容的框（旧版新建后取消编辑会留下「点按输入文字」的僵尸框）；
+    /// 2) 宽度 <= 0 或跑到页面外的框（旧版在页面右边缘点按会把宽度算成负数，
+    ///    这种框连命中区域都是空的，点不到也看不到删除按钮，等于永久删不掉）。
+    private func sanitizeTextBoxes() {
+        var changed = false
+        for noteIndex in notes.indices {
+            let pageWidth = notes[noteIndex].pageSize.width
+            for pageIndex in notes[noteIndex].pages.indices {
+                let before = notes[noteIndex].pages[pageIndex].textBoxes
+                var boxes = before.filter {
+                    !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                }
+                for i in boxes.indices {
+                    if boxes[i].width < 40 {
+                        boxes[i].width = 200
+                        changed = true
+                    }
+                    let maxX = max(pageWidth - 40, 0)
+                    if boxes[i].x < 0 || boxes[i].x > maxX {
+                        boxes[i].x = min(max(boxes[i].x, 0), maxX)
+                        changed = true
+                    }
+                    if boxes[i].y < 0 {
+                        boxes[i].y = 0
+                        changed = true
+                    }
+                }
+                if boxes.count != before.count {
+                    changed = true
+                }
+                notes[noteIndex].pages[pageIndex].textBoxes = boxes
+            }
+        }
+        if changed { scheduleSave() }
     }
 
     private func seed() {

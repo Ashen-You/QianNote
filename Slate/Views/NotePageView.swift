@@ -31,7 +31,11 @@ struct NotePageView: View {
     var replayStrokes: Int? = nil
 
     @State private var selectedTextID: UUID?
-    @State private var editingBox: TextBox?
+    /// 正在就地编辑的文字框（不再弹窗，退格 / 全选 / 输入法都走系统原生行为）
+    @State private var editingTextID: UUID?
+    @State private var draftText: String = ""
+    @State private var draftFontSize: CGFloat = 22
+    @FocusState private var focusedTextID: UUID?
     @State private var dragTranslation: CGSize = .zero
     @State private var draggingID: UUID?
 
@@ -132,7 +136,12 @@ struct NotePageView: View {
                     .contentShape(Rectangle())
                     .frame(width: pageSize.width, height: pageSize.height)
                     .onTapGesture(coordinateSpace: .local) { location in
-                        addTextBox(at: location)
+                        // 正在编辑时点空白处只管收笔，避免一个误触又多出一个空框
+                        if editingTextID != nil {
+                            commitActiveText()
+                        } else {
+                            addTextBox(at: location)
+                        }
                     }
             }
 
@@ -140,18 +149,54 @@ struct NotePageView: View {
         }
         .frame(width: pageSize.width, height: pageSize.height)
         .clipped()
-        .sheet(item: $editingBox) { box in
-            TextBoxEditor(box: box) { updated in
-                store.updatePage(noteID: note.id, pageID: pageID) { page in
-                    if let index = page.textBoxes.firstIndex(where: { $0.id == updated.id }) {
-                        page.textBoxes[index] = updated
-                    }
-                }
-            }
-        }
-        .onChange(of: tools.activeTool) { _, _ in
+        .onChange(of: tools.activeTool) { _, newValue in
+            if newValue != .text { commitActiveText() }
             lassoPoints = []
             lassoSelection = nil
+        }
+        .onChange(of: pageIndex) { _, _ in
+            commitActiveText()
+            selectedTextID = nil
+        }
+        .toolbar {
+            // 键盘上方的一条：字号增减、删除、完成。删除只放在这儿不行（键盘收起就看不到），
+            // 所以选中的文字框右上角还有一颗 ×，两处都能删。
+            ToolbarItemGroup(placement: .keyboard) {
+                if editingTextID != nil {
+                    Button {
+                        draftFontSize = max(12, draftFontSize - 2)
+                    } label: {
+                        Image(systemName: "textformat.size.smaller")
+                    }
+                    .accessibilityLabel("减小字号")
+
+                    Button {
+                        draftFontSize = min(72, draftFontSize + 2)
+                    } label: {
+                        Image(systemName: "textformat.size.larger")
+                    }
+                    .accessibilityLabel("增大字号")
+
+                    Text("\(Int(draftFontSize))")
+                        .font(.footnote.monospacedDigit())
+                        .foregroundStyle(.secondary)
+
+                    Spacer()
+
+                    if let id = editingTextID,
+                       let box = store.note(id: note.id)?.pages[safe: pageIndex]?.textBoxes
+                        .first(where: { $0.id == id }) {
+                        Button(role: .destructive) {
+                            removeTextBox(box)
+                        } label: {
+                            Text("删除")
+                        }
+                    }
+
+                    Button("完成") { commitActiveText() }
+                        .fontWeight(.semibold)
+                }
+            }
         }
     }
 
@@ -556,147 +601,167 @@ struct NotePageView: View {
     }
 
     private func textBoxView(_ box: TextBox) -> some View {
-        let isSelected = selectedTextID == box.id
-        let interactive = tools.activeTool == .text
+        textBoxBody(box,
+                    isSelected: selectedTextID == box.id,
+                    isEditing: editingTextID == box.id,
+                    interactive: tools.activeTool == .text)
+    }
+
+    private func textBoxBody(_ box: TextBox,
+                             isSelected: Bool,
+                             isEditing: Bool,
+                             interactive: Bool) -> some View {
+        // 选中时右侧留出一条给 × 的位置，正文按剩余宽度换行，不会压到按钮上
+        let textWidth = max(CGFloat(box.width) - (isSelected && interactive && !isEditing ? 26 : 8), 48)
+        let tappable = interactive && !isEditing
 
         return ZStack(alignment: .topTrailing) {
-            Text(box.text.isEmpty ? "点按输入文字" : box.text)
-                .font(.system(size: CGFloat(box.fontSize)))
-                .foregroundStyle(box.text.isEmpty ? Color.secondary : (Color(hex: box.colorHex) ?? .primary))
-                .frame(width: CGFloat(box.width), height: CGFloat(box.height), alignment: .topLeading)
-                .padding(4)
-                .background(
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(isSelected && interactive ? Theme.accent.opacity(0.06) : Color.clear)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .strokeBorder(isSelected && interactive ? Theme.accent.opacity(0.6) : Color.clear,
-                                      style: StrokeStyle(lineWidth: 1.2, dash: [4, 3]))
-                )
+            Group {
+                if isEditing {
+                    // 就地编辑：不用弹窗，退格、全选、中文输入法候选都跟系统一致
+                    TextField("", text: $draftText, axis: .vertical)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: draftFontSize))
+                        .foregroundStyle(Color(hex: box.colorHex) ?? .primary)
+                        .focused($focusedTextID, equals: box.id)
+                } else {
+                    Text(box.text.isEmpty ? "点按输入文字" : box.text)
+                        .font(.system(size: CGFloat(box.fontSize)))
+                        .foregroundStyle(box.text.isEmpty ? Color.secondary : (Color(hex: box.colorHex) ?? .primary))
+                }
+            }
+            .frame(width: textWidth, alignment: .topLeading)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.horizontal, 4)
+            .padding(.vertical, 3)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(isSelected && interactive ? Theme.accent.opacity(0.06) : Color.clear)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .strokeBorder(isSelected && interactive ? Theme.accent.opacity(0.6) : Color.clear,
+                                  style: StrokeStyle(lineWidth: 1.2, dash: [4, 3]))
+            )
+            // 手势只挂在文字这一层：编辑中（或非文字工具）完全不挂，
+            // 否则光标的点按定位、拖选会被抢走
+            .contentShape(Rectangle())
+            .onTapGesture {
+                guard tappable else { return }
+                beginEditing(box)
+            }
+            .gesture(dragGesture(for: box), including: tappable ? .all : .none)
 
-            if isSelected && interactive {
+            // × 和文字是 ZStack 里的兄弟节点，不受上面那层轻点手势影响；
+            // 画在框内右上角（不往外偏移），贴页面顶边时不会被 clipped() 裁掉
+            if isSelected && interactive && !isEditing {
                 Button {
-                    store.updatePage(noteID: note.id, pageID: pageID) { page in
-                        page.textBoxes.removeAll { $0.id == box.id }
-                    }
-                    selectedTextID = nil
+                    removeTextBox(box)
                 } label: {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 18))
                         .foregroundStyle(.white, Color.red)
+                        .frame(width: 32, height: 32)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .offset(x: 10, y: -10)
+                .padding(.trailing, 1)
+                .padding(.top, -2)
+                .accessibilityLabel("删除文字")
             }
         }
-        .contentShape(Rectangle())
-        .onTapGesture {
-            guard interactive else { return }
-            selectedTextID = box.id
-            editingBox = box
-        }
-        .gesture(
-            DragGesture(minimumDistance: 6)
-                .onChanged { value in
-                    guard interactive else { return }
-                    draggingID = box.id
-                    dragTranslation = value.translation
-                }
-                .onEnded { value in
-                    guard interactive, draggingID == box.id else { return }
-                    var updated = box
-                    updated.x += Double(value.translation.width)
-                    updated.y += Double(value.translation.height)
-                    store.updatePage(noteID: note.id, pageID: pageID) { page in
-                        if let index = page.textBoxes.firstIndex(where: { $0.id == box.id }) {
-                            page.textBoxes[index] = updated
-                        }
+    }
+
+    private func dragGesture(for box: TextBox) -> some Gesture {
+        DragGesture(minimumDistance: 6)
+            .onChanged { value in
+                draggingID = box.id
+                dragTranslation = value.translation
+            }
+            .onEnded { value in
+                guard draggingID == box.id else { return }
+                var updated = box
+                updated.x += Double(value.translation.width)
+                updated.y += Double(value.translation.height)
+                updated.x = min(max(updated.x, 0), Double(pageSize.width) - 40)
+                updated.y = min(max(updated.y, 0), Double(pageSize.height) - 30)
+                store.updatePage(noteID: note.id, pageID: pageID) { page in
+                    if let index = page.textBoxes.firstIndex(where: { $0.id == box.id }) {
+                        page.textBoxes[index] = updated
                     }
-                    draggingID = nil
-                    dragTranslation = .zero
                 }
-        )
+                draggingID = nil
+                dragTranslation = .zero
+            }
+    }
+
+    // MARK: 文字的编辑 / 提交 / 删除
+
+    private func beginEditing(_ box: TextBox) {
+        if editingTextID != box.id { commitActiveText() }
+        selectedTextID = box.id
+        draftText = box.text
+        draftFontSize = CGFloat(box.fontSize)
+        editingTextID = box.id
+        DispatchQueue.main.async { focusedTextID = box.id }
+    }
+
+    /// 收笔：把草稿写回存储；内容是空的就直接删掉这个框，不留「点按输入文字」的僵尸占位
+    private func commitActiveText() {
+        guard let id = editingTextID else { return }
+        editingTextID = nil
+        focusedTextID = nil
+        // 从 store 取，而不是用 body 里那份 note：新建框后视图会换一份 note 值，
+        // 用旧值找新框会找不到，表现就是「刚写的字没保存」
+        guard let box = store.note(id: note.id)?.pages[safe: pageIndex]?.textBoxes
+            .first(where: { $0.id == id }) else { return }
+
+        let content = draftText
+        let size = Double(draftFontSize)
+        let isEmpty = content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+
+        store.updatePage(noteID: note.id, pageID: pageID) { page in
+            if isEmpty {
+                page.textBoxes.removeAll { $0.id == box.id }
+            } else if let index = page.textBoxes.firstIndex(where: { $0.id == box.id }) {
+                page.textBoxes[index].text = content
+                page.textBoxes[index].fontSize = size
+            }
+        }
+        if isEmpty, selectedTextID == box.id { selectedTextID = nil }
+        // 这次调过的字号顺手记成默认值，下一个新建的框跟着走
+        if !isEmpty, tools.textFontSize != CGFloat(size) { tools.textFontSize = CGFloat(size) }
+    }
+
+    private func removeTextBox(_ box: TextBox) {
+        if editingTextID == box.id {
+            editingTextID = nil
+            focusedTextID = nil
+        }
+        store.updatePage(noteID: note.id, pageID: pageID) { page in
+            page.textBoxes.removeAll { $0.id == box.id }
+        }
+        if selectedTextID == box.id { selectedTextID = nil }
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
     }
 
     private func addTextBox(at location: CGPoint) {
+        // 宽度算出来必须是个正数：点页面右边缘时「pageWidth - x - 16」会变成负数，
+        // 旧版没拦，负宽度的框连内容形状都是空的 —— 点不到、也看不到 ×，就等于永久删不掉。
+        let minWidth: Double = 140
+        let maxX = max(Double(pageSize.width) - minWidth - 16, 0)
+        let x = min(max(Double(location.x), 0), maxX)
         var box = TextBox(text: "",
-                          x: Double(location.x),
-                          y: Double(location.y),
+                          x: x,
+                          y: min(max(Double(location.y), 0), Double(pageSize.height) - 28),
                           fontSize: Double(tools.textFontSize),
                           colorHex: tools.color(for: .text).hexString)
-        box.width = min(320, Double(pageSize.width) - box.x - 20)
-        box.height = 80
+        box.width = min(320, max(minWidth, Double(pageSize.width) - box.x - 16))
 
         store.updatePage(noteID: note.id, pageID: pageID) { page in
             page.textBoxes.append(box)
         }
-        selectedTextID = box.id
-        editingBox = box
-    }
-}
-
-// MARK: - 文字编辑弹窗
-
-struct TextBoxEditor: View {
-    let box: TextBox
-    let onSave: (TextBox) -> Void
-
-    @Environment(\.dismiss) private var dismiss
-    @State private var text: String
-    @State private var fontSize: CGFloat
-
-    init(box: TextBox, onSave: @escaping (TextBox) -> Void) {
-        self.box = box
-        self.onSave = onSave
-        _text = State(initialValue: box.text)
-        _fontSize = State(initialValue: CGFloat(box.fontSize))
-    }
-
-    var body: some View {
-        NavigationStack {
-            VStack(alignment: .leading, spacing: 16) {
-                TextEditor(text: $text)
-                    .font(.system(size: fontSize))
-                    .frame(minHeight: 160)
-                    .padding(8)
-                    .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .strokeBorder(Color.primary.opacity(0.08))
-                    )
-
-                HStack {
-                    Text("字号")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                    Slider(value: $fontSize, in: 12...72, step: 1)
-                    Text("\(Int(fontSize))")
-                        .font(.subheadline.monospacedDigit())
-                        .foregroundStyle(.secondary)
-                        .frame(width: 32, alignment: .trailing)
-                }
-            }
-            .padding(20)
-            .navigationTitle("编辑文字")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("取消") { dismiss() }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("完成") {
-                        var updated = box
-                        updated.text = text
-                        updated.fontSize = Double(fontSize)
-                        onSave(updated)
-                        dismiss()
-                    }
-                    .fontWeight(.semibold)
-                }
-            }
-        }
-        .presentationDetents([.medium, .large])
+        beginEditing(box)
     }
 }
 

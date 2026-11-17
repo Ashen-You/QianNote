@@ -125,6 +125,12 @@
 - 🐞 书写中不替换 `canvas.drawing`：撤销 / 换页 / 外部改色撞上「笔还没离纸」会把当前笔整段抹掉，改为入队、抬笔后应用
 - 🐞 `PKCanvasView` 会随墨迹撑大 `contentSize`，`contentOffset` 非 0 时墨迹层相对纸张平移 → `layoutSubviews` 里钉死视口
 - 🐞 多点手势只数手指（`.direct`）：拿 Pencil 写时手掌压上去会被算成两指手势，抬笔就误撤销
+- 🐞 **文字框删不掉**：三个原因叠在一起 —— ① 旧版在页面右边缘点按，`width = pageWidth - x - 20` 会算成**负数**，
+  负宽度的视图连命中区域都是空的，点不到、也看不到右上角那颗 ×，等于永久删不掉（实测一本笔记里攒了 9 个这样的空框）；
+  ② 新建框后点「取消」会留下一个空内容框，永远显示「点按输入文字」；③ 想删只能先取消弹窗再点那颗 18pt 的 ×，路径极不直观。
+  现在：宽度有最小值、坐标夹在页面内；**取消/清空后空框自动删除**；`NoteStore.load()` 启动时 `sanitizeTextBoxes()` 清理历史坏框
+- ✨ 文字编辑从「弹窗 Sheet」改成**页面上就地输入**：点一下就在原位置出现光标，键盘上方带「A− / A+ / 删除 / 完成」，
+  框体随内容高度自适应（旧版固定 80pt，长文本会被截断）
 - 🐞 **换页串墨迹（下一页的笔记跑到上一页）**：`updateUIView` 里先 `coordinator.parent = self`（新页）再 `flushCurrentDrawing()`，
   于是旧页那 0.25 秒还没落盘的笔迹被写进了新页的文件，`drawingCache` 同时被污染，之后每次加载都会看到别页的内容。
   修复：Coordinator 记住 `ownerPageID/ownerSave`，所有落盘（合并保存 / 抬笔 flush / `dismantleUIView` / `applyProgrammatic`）

@@ -122,7 +122,9 @@ TEAM_ID=你的TeamID bash Scripts/build_ipa.sh --signed   # 用本机证书导�
 - 回放时自动跟随书签翻页，支持进度拖动、删除录音
 
 ### 文字与图片
-- 文字工具：在页面上点按即可插入文本框，可拖动位置、修改字号、删除
+- 文字工具：**在页面上点按即在原位置输入**（不弹窗），键盘上方有「A− / A+ / 删除 / 完成」
+- 点已有文字框即可改字；框体随内容自动撑高，不再固定 80pt 截断
+- 选中时右上角有红色 × 直接删；内容清空后收笔，这个框会**自动消失**（不留「点按输入文字」的空占位）
 - 图片：**相册选图**或**直接拍照**插入，套索模式下拖动 / 等比缩放 / **裁剪** / 删除
 - 导出 PDF / PNG 时，文字、图片与手写一起合成
 
@@ -187,6 +189,7 @@ Documents/Slate/
 
 - **画布**：`DrawingCanvas` 把 `PKCanvasView` 包进 SwiftUI，`isScrollEnabled = false` 让页面固定；工具通过 `ToolStore.pkTool` 注入。用 `toolKey` 字符串比对，避免每次刷新都重设工具导致套索选区丢失。
 - **画布代理（易踩的坑）**：`makeUIView` 里必须 `canvas.delegate = coordinator`。`canvasViewDrawingDidChange` 是撤销栈、自动保存、形状识别、虚线切分、录音笔迹打点的**唯一入口**，代理没接上时这些功能会全部静默失效（表现为顶栏撤销/重做一直置灰）。
+- **文字层**：`NotePageView` 里每个 `TextBox` 是页面上的绝对定位视图。点按 → 直接换成 `TextField(axis: .vertical)` 就地输入（不再弹 sheet，退格/全选/输入法候选全走系统原生），键盘上方一条 `ToolbarItemGroup(placement: .keyboard)` 管字号、删除、完成；失焦或切工具即提交。内容为空时提交会把整个框删掉，避免留下一堆「点按输入文字」的空框。`NoteStore.load()` 还会做一次 `sanitizeTextBoxes()`，清掉历史遗留的空框与负宽度框（旧版在页面右边缘点按会算成负宽度，这种框连命中区域都是空的，点不到也看不到删除按钮）。
 - **撤销**：不依赖 `UndoManager`，而是 `CanvasController` 保存 `PKDrawing` 快照栈，撤销时整体回填并回写存储，行为稳定。
 - **无笔手势**：两指/三指 `UITapGestureRecognizer` 挂在画布上。指写模式下两根手指落下可能先留两个点，所以第二指落下时记下「撤销栈深度 + 笔画数」，识别成手势后用 `truncateHistory` 丢掉这几步、只清理点状笔迹，再执行撤销/重做。
 - **墨迹归属**：`DrawingCanvas.Coordinator` 记着「画布上这份墨迹属于哪一页」（`ownerPageID` + `ownerSave`）。落盘走 `saveToOwner`，而不是用 `parent.onChange` —— 换页时 `parent` 已经换成新页了，用它落盘会把上一页的笔迹写进下一页的文件，两页互相串墨迹（表现为「下一页的笔记跑到上一页去了」）。
