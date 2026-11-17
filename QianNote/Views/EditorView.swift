@@ -6,6 +6,8 @@ import UIKit
 struct EditorView: View {
     @EnvironmentObject private var store: NoteStore
     @Environment(\.dismiss) private var dismiss
+    /// 系统撤销管理器：三指滑动 / 摇一摇 / 外接键盘 ⌘Z 都经由它触发
+    @Environment(\.undoManager) private var undoManager
     /// iPhone（紧凑宽度）走另一套排版：顶栏精简、工具栏贴底、页面列表改成弹窗
     @Environment(\.horizontalSizeClass) private var sizeClass
 
@@ -195,6 +197,7 @@ struct EditorView: View {
         }
         .onAppear {
             pageIndex = min(pageIndex, max(note.pages.count - 1, 0))
+            controllers.systemUndoManager = undoManager
             if let page = note.pages[safe: pageIndex] {
                 controllers.activate(page.id)
             }

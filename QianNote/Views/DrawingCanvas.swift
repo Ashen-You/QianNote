@@ -5,13 +5,17 @@ import Combine
 
 // MARK: - 画布控制器（撤销 / 重做 / 恢复）
 
-final class CanvasController: ObservableObject {
+final class CanvasController: NSObject, ObservableObject {
     @Published private(set) var canUndo = false
     @Published private(set) var canRedo = false
 
     var currentDrawing = PKDrawing()
     weak var canvas: PKCanvasView?
     var onDrawingRestored: ((PKDrawing) -> Void)?
+
+    /// 系统 UndoManager（由 Pool 在切页时注入）。
+    /// 让三指滑动 / 摇一摇 / 外接键盘 ⌘Z 与工具栏按钮走同一套自研撤销栈。
+    weak var systemUndoManager: UndoManager?
 
     private var undoStack: [PKDrawing] = []
     private var redoStack: [PKDrawing] = []
@@ -23,6 +27,7 @@ final class CanvasController: ObservableObject {
     func resetHistory() {
         undoStack.removeAll()
         redoStack.removeAll()
+        systemUndoManager?.removeAllActions()
         updateFlags()
     }
 
@@ -31,6 +36,7 @@ final class CanvasController: ObservableObject {
         guard depth >= 0, depth < undoStack.count else { return }
         undoStack.removeLast(undoStack.count - depth)
         updateFlags()
+        rebuildSystemUndo()
     }
 
     func record(previous: PKDrawing, current: PKDrawing) {
@@ -45,18 +51,25 @@ final class CanvasController: ObservableObject {
         redoStack.removeAll()
         currentDrawing = current
         updateFlags()
+        registerSystemUndo()
     }
 
+    /// 撤销：有系统 undoManager 时经由它触发（统一三指 / ⌘Z / 工具栏入口），
+    /// 否则直接走自研栈（单元测试、未注入 undoManager 的场景）。
     func undo() {
-        guard let target = undoStack.popLast() else { return }
-        redoStack.append(currentDrawing)
-        restore(target)
+        if let um = systemUndoManager, um.canUndo {
+            um.undo()
+        } else {
+            rawUndo()
+        }
     }
 
     func redo() {
-        guard let target = redoStack.popLast() else { return }
-        undoStack.append(currentDrawing)
-        restore(target)
+        if let um = systemUndoManager, um.canRedo {
+            um.redo()
+        } else {
+            rawRedo()
+        }
     }
 
     /// 外部（套索改色 / 删除 / 复制）修改笔迹：记为一步撤销并同步回画布
@@ -64,6 +77,20 @@ final class CanvasController: ObservableObject {
         let previous = currentDrawing
         record(previous: previous, current: updated)
         onDrawingRestored?(updated)
+    }
+
+    // MARK: - 自研栈的原始操作（不碰系统 undoManager）
+
+    private func rawUndo() {
+        guard let target = undoStack.popLast() else { return }
+        redoStack.append(currentDrawing)
+        restore(target)
+    }
+
+    private func rawRedo() {
+        guard let target = redoStack.popLast() else { return }
+        undoStack.append(currentDrawing)
+        restore(target)
     }
 
     private func restore(_ drawing: PKDrawing) {
@@ -79,6 +106,59 @@ final class CanvasController: ObservableObject {
         if canRedo != redoAvailable { canRedo = redoAvailable }
     }
 
+    // MARK: - 系统 UndoManager 桥接
+
+    /// 每写一笔，向系统 undoManager 追加一个「撤销」动作。
+    /// 系统 undo/redo 与自研栈通过「反向注册」互相衔接，天然自平衡，无需手动重建。
+    private func registerSystemUndo() {
+        guard let um = systemUndoManager else { return }
+        um.registerUndo(withTarget: self) { [weak self] target in
+            target.undoFromSystem()
+        }
+        um.setActionName("写字")
+    }
+
+    /// 切页 / 截断历史后，按当前自研栈深度重建系统撤销动作列表。
+    /// 只在非撤销进行中调用（`activate`、`truncateHistory` 都是用户主动操作），
+    /// 所以可以安全地 `removeAllActions` 再逐层注册。
+    /// 注意：UndoManager 会把同一个 runloop 事件里对同一 target 的多次 registerUndo
+    /// 折叠成一层，所以这里把每一层放到独立的 runloop turn 里注册，保证层数与自研栈一致。
+    func rebuildSystemUndo() {
+        guard let um = systemUndoManager else { return }
+        um.removeAllActions(withTarget: self)
+        var remaining = undoStack.count
+        func registerOneLevel() {
+            guard remaining > 0 else { return }
+            remaining -= 1
+            um.registerUndo(withTarget: self) { [weak self] target in
+                target.undoFromSystem()
+            }
+            DispatchQueue.main.async { registerOneLevel() }
+        }
+        registerOneLevel()
+    }
+
+    /// 系统（三指 / ⌘Z / 菜单）发起的撤销：
+    /// 此刻 UndoManager 正在撤销，`registerUndo` 会落到 redo 栈，正好注册「重做」反向动作。
+    @objc func undoFromSystem() {
+        if let um = systemUndoManager {
+            um.registerUndo(withTarget: self) { [weak self] target in
+                target.redoFromSystem()
+            }
+        }
+        rawUndo()
+    }
+
+    /// 系统发起的重做：反向注册「撤销」动作，再前进一步。
+    @objc func redoFromSystem() {
+        if let um = systemUndoManager {
+            um.registerUndo(withTarget: self) { [weak self] target in
+                target.undoFromSystem()
+            }
+        }
+        rawRedo()
+    }
+
     /// 便宜的相等判断：先比较笔画数量，再比较二进制数据
     private func isSame(_ lhs: PKDrawing, _ rhs: PKDrawing) -> Bool {
         guard lhs.strokes.count == rhs.strokes.count else { return false }
@@ -92,6 +172,11 @@ final class CanvasControllerPool: ObservableObject {
     @Published private(set) var canUndo = false
     @Published private(set) var canRedo = false
     @Published private(set) var activePageID: UUID?
+
+    /// 系统 UndoManager（由 EditorView 从环境注入）。
+    /// 三指滑动 / 摇一摇 / ⌘Z 都作用在这一个 undoManager 上，
+    /// 切页时它跟着切换绑定到「当前页」的撤销栈。
+    var systemUndoManager: UndoManager?
 
     private var controllers: [UUID: CanvasController] = [:]
     private var observers: [UUID: AnyCancellable] = [:]
@@ -116,7 +201,21 @@ final class CanvasControllerPool: ObservableObject {
             return
         }
         activePageID = pageID
+        // 切页：把系统 undoManager 重新绑定到新页的撤销栈，
+        // 并清掉旧页残留的系统撤销动作，避免 ⌘Z 串页。
+        let controller = controller(for: pageID)   // 确保该页的撤销栈已存在
+        bindSystemUndo(controller)
         refreshFlags()
+    }
+
+    /// 把系统 undoManager 绑定到某一页的撤销栈。
+    /// 系统 undo 历史是线性的，跨页不能混用，所以每次切页都清空重建。
+    private func bindSystemUndo(_ controller: CanvasController) {
+        controller.systemUndoManager = systemUndoManager
+        // 旧页的撤销动作挂在旧页 controller 上，`removeAllActions(withTarget:)` 清不掉，
+        // 必须先全局清空，再按新页自研栈重建。
+        systemUndoManager?.removeAllActions()
+        controller.rebuildSystemUndo()
     }
 
     @discardableResult

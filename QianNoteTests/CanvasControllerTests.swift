@@ -186,3 +186,139 @@ final class CanvasControllerPoolTests: XCTestCase {
         XCTAssertTrue(pool.controller(for: pageB).canUndo, "页 B 的栈不受页 A 撤销影响")
     }
 }
+
+// MARK: - 系统 UndoManager 桥接
+
+final class CanvasControllerSystemUndoTests: XCTestCase {
+
+    private func makeDrawing(to point: CGPoint) -> PKDrawing {
+        let ink = PKInk(.pen, color: .black)
+        let points = [
+            PKStrokePoint(location: .zero, timeOffset: 0, size: CGSize(width: 3, height: 3),
+                          opacity: 1, force: 0.7, azimuth: 0, altitude: .pi / 2),
+            PKStrokePoint(location: point, timeOffset: 0.01, size: CGSize(width: 3, height: 3),
+                          opacity: 1, force: 0.7, azimuth: 0, altitude: .pi / 2),
+        ]
+        let path = PKStrokePath(controlPoints: points, creationDate: Date())
+        let stroke = PKStroke(ink: ink, path: path, transform: .identity, mask: nil)
+        return PKDrawing(strokes: [stroke])
+    }
+
+    /// 让同步到 runloop 末尾的重建任务先跑完，再断言系统 undoManager 状态
+    private func drainMainQueue() {
+        let exp = expectation(description: "drain")
+        DispatchQueue.main.async { exp.fulfill() }
+        wait(for: [exp], timeout: 1.0)
+    }
+
+    /// 模拟真实书写：每笔落在一个独立的 runloop 事件里（一次 touchesEnded）。
+    /// UndoManager 会把同一事件内对同一 target 的多次 registerUndo 折叠成一层，
+    /// 所以测试里必须跨 runloop 记录，才能得到与真机一致的层数。
+    private func recordStroke(_ controller: CanvasController,
+                              previous: PKDrawing,
+                              current: PKDrawing) {
+        let exp = expectation(description: "record")
+        DispatchQueue.main.async {
+            controller.record(previous: previous, current: current)
+            exp.fulfill()
+        }
+        wait(for: [exp], timeout: 1.0)
+    }
+
+    func testSystemUndo_managerReceivesUndoRegistration() {
+        let controller = CanvasController()
+        let undoManager = UndoManager()
+        controller.systemUndoManager = undoManager
+
+        let d1 = makeDrawing(to: CGPoint(x: 100, y: 100))
+        recordStroke(controller, previous: PKDrawing(), current: d1)
+        drainMainQueue()
+
+        XCTAssertTrue(controller.canUndo)
+        XCTAssertTrue(undoManager.canUndo, "系统 undoManager 应能撤销")
+    }
+
+    func testSystemUndo_threeFingerUndoDrivesSelfStack() {
+        let controller = CanvasController()
+        let undoManager = UndoManager()
+        controller.systemUndoManager = undoManager
+
+        let d1 = makeDrawing(to: CGPoint(x: 100, y: 100))
+        let d2 = makeDrawing(to: CGPoint(x: 200, y: 200))
+        recordStroke(controller, previous: PKDrawing(), current: d1)
+        recordStroke(controller, previous: d1, current: d2)
+        drainMainQueue()
+
+        XCTAssertEqual(controller.historyDepth, 2)
+        XCTAssertTrue(undoManager.canUndo)
+
+        // 模拟系统撤销（三指滑动 / ⌘Z）——直接调用 undoManager.undo()
+        undoManager.undo()
+        drainMainQueue()
+
+        XCTAssertEqual(controller.currentDrawing.strokes.count, d1.strokes.count,
+                       "系统撤销后应回到 d1（1 条笔迹）")
+        XCTAssertEqual(controller.historyDepth, 1, "撤销后自研栈应减一层")
+    }
+
+    func testSystemUndo_supportsRedoAfterUndo() {
+        let controller = CanvasController()
+        let undoManager = UndoManager()
+        controller.systemUndoManager = undoManager
+
+        let d1 = makeDrawing(to: CGPoint(x: 100, y: 100))
+        let d2 = makeDrawing(to: CGPoint(x: 200, y: 200))
+        recordStroke(controller, previous: PKDrawing(), current: d1)
+        recordStroke(controller, previous: d1, current: d2)
+        drainMainQueue()
+
+        undoManager.undo()
+        drainMainQueue()
+        XCTAssertEqual(controller.currentDrawing.strokes.count, d1.strokes.count)
+        XCTAssertTrue(undoManager.canRedo, "撤销后系统应可重做")
+
+        undoManager.redo()
+        drainMainQueue()
+        XCTAssertEqual(controller.currentDrawing.strokes.count, d2.strokes.count,
+                       "重做后应回到 d2（2 条笔迹）")
+    }
+
+    func testSystemUndo_resetHistoryClearsSystemManager() {
+        let controller = CanvasController()
+        let undoManager = UndoManager()
+        controller.systemUndoManager = undoManager
+
+        let d1 = makeDrawing(to: CGPoint(x: 100, y: 100))
+        recordStroke(controller, previous: PKDrawing(), current: d1)
+        drainMainQueue()
+        XCTAssertTrue(undoManager.canUndo)
+
+        controller.resetHistory()
+        drainMainQueue()
+
+        XCTAssertFalse(undoManager.canUndo, "清空历史后系统 undoManager 应无可撤销动作")
+        XCTAssertFalse(controller.canUndo)
+    }
+
+    func testSystemUndo_poolSwitchesBindingPerPage() {
+        let pool = CanvasControllerPool()
+        let undoManager = UndoManager()
+        pool.systemUndoManager = undoManager
+
+        let pageA = UUID()
+        let pageB = UUID()
+        let d1 = makeDrawing(to: CGPoint(x: 100, y: 100))
+
+        // 真实流程：先建 controller（LazyVStack 渲染），再 activate（onAppear），再落笔
+        let controllerA = pool.controller(for: pageA)
+        pool.activate(pageA)
+        recordStroke(controllerA, previous: PKDrawing(), current: d1)
+        drainMainQueue()
+        XCTAssertTrue(undoManager.canUndo, "页 A 落笔后系统应可撤销")
+
+        // 切到空页 B：系统 undo 历史应被清空
+        pool.activate(pageB)
+        drainMainQueue()
+        XCTAssertFalse(undoManager.canUndo, "切到空页 B 后系统应无可撤销")
+    }
+}
