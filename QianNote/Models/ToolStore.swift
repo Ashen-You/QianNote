@@ -160,6 +160,8 @@ final class ToolStore: ObservableObject {
     @Published var activeTool: ToolKind = .pen {
         didSet {
             guard activeTool != oldValue else { return }
+            // 记住用户最后一次选的工具，下次进入继续沿用
+            defaults.set(activeTool.rawValue, forKey: "tool.activeTool")
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
         }
     }
@@ -247,6 +249,13 @@ final class ToolStore: ObservableObject {
 
         if defaults.object(forKey: "tool.shapeRecognition") != nil {
             shapeRecognition = defaults.bool(forKey: "tool.shapeRecognition")
+        }
+
+        // 恢复用户上次选中的工具。激光笔 / 套索 / 文字等非常驻工具也一并记住，
+        // 下次进入直接回到上次的手势，而不是每次都退回钢笔。
+        if let raw = defaults.string(forKey: "tool.activeTool"),
+           let tool = ToolKind(rawValue: raw) {
+            activeTool = tool
         }
     }
 
