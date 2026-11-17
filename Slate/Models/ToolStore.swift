@@ -171,7 +171,8 @@ final class ToolStore: ObservableObject {
         didSet { defaults.set(Double(textFontSize), forKey: "text.fontSize") }
     }
 
-    @Published var fingerDrawing: Bool = true {
+    /// 手指是否直接书写。默认关闭 = 手拖模式：手指拖页面 / 翻页，Pencil 照常写字
+    @Published var fingerDrawing: Bool = false {
         didSet { defaults.set(fingerDrawing, forKey: "tool.fingerDrawing") }
     }
 
@@ -218,6 +219,12 @@ final class ToolStore: ObservableObject {
         colors = loadedColors
         widths = loadedWidths
 
+        // 「手拖」成为默认模式。老用户之前存过「手指=书写」，一次性迁移过来，
+        // 否则升级后仍然是手指写字，会觉得没生效
+        if !defaults.bool(forKey: "tool.defaultHandMigrated") {
+            defaults.set(true, forKey: "tool.defaultHandMigrated")
+            defaults.set(false, forKey: "tool.fingerDrawing")
+        }
         if defaults.object(forKey: "tool.fingerDrawing") != nil {
             fingerDrawing = defaults.bool(forKey: "tool.fingerDrawing")
         }

@@ -5,12 +5,21 @@ import SwiftUI
 struct ToolRailView: View {
     @ObservedObject var tools: ToolStore
     @Binding var showPalette: Bool
+    /// 收起工具栏（浮层模式下留一颗箭头，收起来后页面整块可用）
+    var onCollapse: () -> Void = {}
+
+    /// 手拖模式：手指不写字，只管拖页面 / 翻页（Pencil 照常书写）
+    private var isHandActive: Bool { !tools.fingerDrawing }
 
     var body: some View {
         VStack(spacing: 4) {
+            handButton
+            separator
             ForEach(ToolKind.allCases) { tool in
                 toolButton(tool)
             }
+            separator
+            collapseButton
         }
         .padding(7)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
@@ -21,12 +30,58 @@ struct ToolRailView: View {
         .shadow(color: Color.black.opacity(0.12), radius: 16, x: 0, y: 6)
     }
 
+    private var separator: some View {
+        Rectangle()
+            .fill(Color.primary.opacity(0.10))
+            .frame(width: 24, height: 1)
+            .padding(.vertical, 3)
+    }
+
+    /// 手指拖动：放在工具栏最上面，和其他书写工具同一处，不拿笔也能一指切过去
+    private var handButton: some View {
+        Button {
+            guard !isHandActive else { return }
+            tools.fingerDrawing = false
+            // 手拖没有颜色/粗细可调，顺手把面板收起来
+            withAnimation(.easeInOut(duration: 0.18)) { showPalette = false }
+        } label: {
+            ZStack {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(isHandActive ? Theme.accent.opacity(0.14) : Color.clear)
+
+                Image(systemName: isHandActive ? "hand.point.up.left.fill" : "hand.point.up.left")
+                    .font(.system(size: 18, weight: .medium))
+                    .foregroundStyle(isHandActive ? Theme.accent : Color.primary.opacity(0.72))
+            }
+            .frame(width: 44, height: 40)
+            .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("手指拖动页面")
+    }
+
+    private var collapseButton: some View {
+        Button(action: onCollapse) {
+            Image(systemName: "chevron.left")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Color.primary.opacity(0.45))
+                .frame(width: 44, height: 26)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("收起工具栏")
+    }
+
     private func toolButton(_ tool: ToolKind) -> some View {
-        let isActive = tools.activeTool == tool
+        // 手拖模式下所有书写工具都算「未选中」，点一下即回到书写
+        let isActive = tools.activeTool == tool && tools.fingerDrawing
 
         return Button {
-            // 与 Notability 一致：再点当前工具收起面板，点别的工具则切换并展开面板
-            if isActive {
+            let wasActive = isActive
+            // 选任何书写工具都会退出「手拖」，手指重新按当前笔写字
+            tools.fingerDrawing = true
+            if wasActive {
+                // 与 Notability 一致：再点当前工具收起面板，点别的工具则切换并展开面板
                 withAnimation(.easeInOut(duration: 0.18)) { showPalette.toggle() }
             } else {
                 tools.activeTool = tool

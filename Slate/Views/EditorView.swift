@@ -27,8 +27,10 @@ struct EditorView: View {
     @State private var immersive = false
     /// 全屏时按宽度还是按高度适配
     @State private var fitToWidth = false
-    /// 工具面板（颜色 / 粗细）是否展开
-    @State private var showPalette = true
+    /// 工具面板（颜色 / 粗细）是否展开。默认关闭：默认工具是「手拖」，没有颜色可调
+    @State private var showPalette = false
+    /// 左侧工具栏是否显示（浮层，可收起让页面整块可用）
+    @AppStorage("editor.showToolRail") private var showRail = true
     @State private var showPhotoPicker = false
     @State private var photoItem: PhotosPickerItem?
     /// 拍照插入
@@ -166,13 +168,6 @@ struct EditorView: View {
 
     private func workspace(_ note: Note) -> some View {
         HStack(spacing: 0) {
-            if !immersive {
-                ToolRailView(tools: tools, showPalette: $showPalette)
-                    .padding(.leading, 12)
-                    .frame(maxHeight: .infinity, alignment: .center)
-                    .transition(.move(edge: .leading).combined(with: .opacity))
-            }
-
             Group {
                 if continuous {
                     continuousArea(note)
@@ -190,7 +185,8 @@ struct EditorView: View {
                     .transition(.move(edge: .trailing).combined(with: .opacity))
             }
         }
-        // 工具面板浮在页面之上，不再挤占画布宽度。
+        // 工具栏和工具面板都浮在页面之上，不再挤占画布宽度（以前工具栏是 HStack 成员，一展开就少 70pt）
+        .overlay(alignment: .leading) { railFloating }
         // 注意要挂在 padding 之前：挂在后面时 overlay 的范围是整块屏幕，面板顶部会被顶栏压住
         .overlay(alignment: .leading) { paletteFloating }
         .padding(.top, immersive ? 0 : 70)
@@ -220,6 +216,72 @@ struct EditorView: View {
         }
     }
 
+    // MARK: - 工具栏浮层
+
+    /// 工具栏宽 58 + 左边距 12；面板贴在它右侧再留 8
+    private let railWidth: CGFloat = 58
+    private let railInset: CGFloat = 12
+
+    @ViewBuilder
+    private var railFloating: some View {
+        if !immersive {
+            if showRail {
+                railCard
+                    .padding(.leading, railInset)
+                    .transition(.move(edge: .leading).combined(with: .opacity))
+                    .zIndex(3)
+            } else {
+                railRevealTab
+                    .padding(.leading, 4)
+                    .transition(.opacity)
+                    .zIndex(3)
+            }
+        }
+    }
+
+    /// 工具栏卡片：竖着放不下（横屏 / 小屏）时退化成可滚动，不再被容器直接切掉
+    private var railCard: some View {
+        GeometryReader { geo in
+            ViewThatFits(in: .vertical) {
+                railContent
+                ScrollView(.vertical, showsIndicators: false) {
+                    railContent
+                }
+                .scrollBounceBehavior(.basedOnSize)
+            }
+            .frame(width: railWidth, height: geo.size.height, alignment: .center)
+        }
+        .frame(width: railWidth)
+    }
+
+    private var railContent: some View {
+        ToolRailView(tools: tools, showPalette: $showPalette) {
+            withAnimation(.easeInOut(duration: 0.22)) { hideRail() }
+        }
+    }
+
+    /// 收起之后留在屏幕左边缘的小把手，点一下把工具栏叫回来
+    private var railRevealTab: some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.22)) { showRail = true }
+        } label: {
+            Image(systemName: "chevron.right")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(Color.primary.opacity(0.5))
+                .frame(width: 20, height: 54)
+                .background(.regularMaterial, in: Capsule())
+                .overlay(Capsule().strokeBorder(Color.primary.opacity(0.07), lineWidth: 1))
+                .shadow(color: Color.black.opacity(0.10), radius: 8, x: 0, y: 2)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("显示工具栏")
+    }
+
+    private func hideRail() {
+        showPalette = false
+        showRail = false
+    }
+
     // MARK: - 工具面板浮层
 
     /// 面板卡片：外面留 12pt 给阴影，卡片左边缘正好贴着工具栏右侧（12 + 58 + 8）
@@ -232,7 +294,7 @@ struct EditorView: View {
     /// 放不下（小屏 / 横屏）才退化成可滚动的面板，不再像以前那样被容器直接切掉。
     @ViewBuilder
     private var paletteFloating: some View {
-        if showPalette && !immersive {
+        if showPalette && showRail && !immersive {
             GeometryReader { geo in
                 ViewThatFits(in: .vertical) {
                     paletteCard
@@ -242,9 +304,10 @@ struct EditorView: View {
                     .scrollBounceBehavior(.basedOnSize)
                 }
                 .frame(width: 224, alignment: .leading)
-                .frame(maxHeight: geo.size.height, alignment: .top)
+                // 与竖向居中的工具栏并排时垂直居中对齐，看起来像从工具栏上「长」出来的一页
+                .frame(maxHeight: geo.size.height, alignment: .center)
             }
-            .padding(.leading, 66)
+            .padding(.leading, railInset + railWidth + 4)
             .transition(.move(edge: .leading).combined(with: .opacity))
             .zIndex(2)
         }
@@ -254,7 +317,7 @@ struct EditorView: View {
     /// 只负责视觉，不吃触摸，免得打开面板就没法写字。
     @ViewBuilder
     private var paletteScrim: some View {
-        if showPalette && !immersive {
+        if showPalette && showRail && !immersive {
             LinearGradient(colors: [Color.black.opacity(0.14),
                                     Color.black.opacity(0.04),
                                     .clear],
@@ -732,11 +795,13 @@ struct EditorView: View {
                 withAnimation(.easeInOut(duration: 0.2)) { continuous.toggle() }
             }
 
-            // 手指：书写 ↔ 拖动。独立按钮，和颜色/粗细面板解耦，不拿笔也能一指点到
-            IconButton(systemName: "hand.point.up.left",
-                       isActive: !tools.fingerDrawing,
-                       label: tools.fingerDrawing ? "手指：书写（点按切换为拖动）" : "手指：拖动页面") {
-                toggleFingerDrag()
+            // 工具栏显隐。手拖按钮已经挪进工具栏第一位，这里只留一个开关
+            IconButton(systemName: showRail ? "sidebar.left" : "sidebar.leading",
+                       isActive: showRail,
+                       label: showRail ? "隐藏工具栏" : "显示工具栏") {
+                withAnimation(.easeInOut(duration: 0.22)) {
+                    if showRail { hideRail() } else { showRail = true }
+                }
             }
 
             IconButton(systemName: "arrow.up.left.and.arrow.down.right",
@@ -1186,14 +1251,6 @@ struct EditorView: View {
     }
 
     /// 手指：书写 ↔ 拖动。放在顶栏单独一个按钮，不用展开颜色面板去翻
-    private func toggleFingerDrag() {
-        tools.fingerDrawing.toggle()
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        showToast(tools.fingerDrawing
-                  ? "手指：书写"
-                  : "手指：拖动页面（1× 时上下拖动翻页）")
-    }
-
     private func showToast(_ text: String) {
         toastTask?.cancel()
         withAnimation(.easeOut(duration: 0.16)) { toast = text }
