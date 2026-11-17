@@ -37,6 +37,9 @@ struct EditorView: View {
     @State private var replay = false
     /// 多页连续滚动（Notability 的阅读模式）
     @State private var continuous = false
+    /// 手势操作后的短暂提示（两指撤销 / 三指重做）
+    @State private var toast: String?
+    @State private var toastTask: Task<Void, Never>?
 
     /// 用户缩放倍率（1 = 适配整页）
     @State private var zoom: CGFloat = 1
@@ -128,6 +131,10 @@ struct EditorView: View {
         }
         .overlay(alignment: .bottom) {
             VStack(spacing: 8) {
+                if let toast {
+                    toastBadge(toast)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
                 if replay {
                     replayBadge
                 }
@@ -139,6 +146,7 @@ struct EditorView: View {
             .padding(.bottom, 96)
         }
         .animation(.easeInOut(duration: 0.2), value: errorMessage)
+        .animation(.easeInOut(duration: 0.18), value: toast)
         .onDisappear {
             stopReplayTimer()
             replay = false
@@ -251,6 +259,8 @@ struct EditorView: View {
                          onStrokeCommitted: { count in
                              recordInkStamp(pageID: currentPageID(note), count: count)
                          },
+                         onUndoTap: { gestureUndo(currentPageID(note)) },
+                         onRedoTap: { gestureRedo(currentPageID(note)) },
                          replayStrokes: replayStrokeCount(for: currentPageID(note)))
                 .frame(width: pageWidth, height: pageHeight)
                 .scaleEffect(fit * zoom, anchor: .center)
@@ -297,6 +307,8 @@ struct EditorView: View {
                                      onStrokeCommitted: { count in
                                          recordInkStamp(pageID: page.id, count: count)
                                      },
+                                     onUndoTap: { gestureUndo(page.id) },
+                                     onRedoTap: { gestureRedo(page.id) },
                                      replayStrokes: replayStrokeCount(for: page.id))
                             .frame(width: note.pageSize.width, height: note.pageSize.height)
                             .scaleEffect(scale)
@@ -613,13 +625,13 @@ struct EditorView: View {
             HStack(spacing: 2) {
                 IconButton(systemName: "arrow.uturn.backward",
                            isActive: false,
-                           label: "撤销") { controllers.undo() }
+                           label: "撤销") { undoCurrentPage() }
                     .opacity(controllers.canUndo ? 1 : 0.35)
                     .disabled(!controllers.canUndo)
 
                 IconButton(systemName: "arrow.uturn.forward",
                            isActive: false,
-                           label: "重做") { controllers.redo() }
+                           label: "重做") { redoCurrentPage() }
                     .opacity(controllers.canRedo ? 1 : 0.35)
                     .disabled(!controllers.canRedo)
             }
@@ -860,6 +872,20 @@ struct EditorView: View {
                         }
                     }
                     .padding(.top, 6)
+
+                    VStack(alignment: .leading, spacing: 9) {
+                        Text("手势")
+                            .font(.subheadline.weight(.semibold))
+                        Text("不拿笔也能操作，指写模式下同样有效")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        gestureRow("两指点击", "撤销")
+                        gestureRow("三指点击", "重做")
+                        gestureRow("双指捏合 / 拖动", "缩放 / 平移")
+                        gestureRow("双击（指写模式除外）", "整页 ↔ 2.2×")
+                    }
+                    .padding(.top, 10)
                 }
                 .padding(20)
             }
@@ -872,6 +898,21 @@ struct EditorView: View {
             }
         }
         .presentationDetents([.medium, .large])
+    }
+
+    /// 设置页里的一行手势说明
+    private func gestureRow(_ gesture: String, _ action: String) -> some View {
+        HStack(spacing: 8) {
+            Text(gesture)
+                .font(.footnote)
+                .foregroundStyle(Color.primary.opacity(0.8))
+            Image(systemName: "arrow.right")
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(.tertiary)
+            Text(action)
+                .font(.footnote.weight(.medium))
+            Spacer(minLength: 0)
+        }
     }
 
     private func applyPaper(template: PaperTemplate, tint: PaperTint) {
@@ -1017,5 +1058,72 @@ struct EditorView: View {
     private func exportPDF() {
         guard let url = store.exportPDF(noteID: noteID) else { return }
         sheet = .share(url)
+    }
+
+    // MARK: - 手势撤销 / 重做
+
+    private func undoCurrentPage() {
+        if let note {
+            controllers.undo(pageID: currentPageID(note))
+        } else {
+            controllers.undo()
+        }
+    }
+
+    private func redoCurrentPage() {
+        if let note {
+            controllers.redo(pageID: currentPageID(note))
+        } else {
+            controllers.redo()
+        }
+    }
+
+    /// 两指点击 → 撤销
+    private func gestureUndo(_ pageID: UUID) {
+        if controllers.undo(pageID: pageID) {
+            UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
+            showToast("已撤销")
+        } else {
+            UINotificationFeedbackGenerator().notificationOccurred(.warning)
+            showToast("没有可撤销的操作")
+        }
+    }
+
+    /// 三指点击 → 重做
+    private func gestureRedo(_ pageID: UUID) {
+        if controllers.redo(pageID: pageID) {
+            UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
+            showToast("已重做")
+        } else {
+            UINotificationFeedbackGenerator().notificationOccurred(.warning)
+            showToast("没有可重做的操作")
+        }
+    }
+
+    private func showToast(_ text: String) {
+        toastTask?.cancel()
+        withAnimation(.easeOut(duration: 0.16)) { toast = text }
+        toastTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 1_100_000_000)
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeIn(duration: 0.2)) { toast = nil }
+        }
+    }
+
+    private func toastBadge(_ text: String) -> some View {
+        HStack(spacing: 7) {
+            Image(systemName: text.hasPrefix("没有") ? "exclamationmark.circle" : "checkmark.circle")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(text.hasPrefix("没有") ? Color.orange : Theme.accent)
+            Text(text)
+                .font(.footnote.weight(.medium))
+                .foregroundStyle(Color.primary.opacity(0.8))
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .background(.regularMaterial, in: Capsule())
+        .overlay(Capsule().strokeBorder(Color.primary.opacity(0.07), lineWidth: 1))
+        .shadow(color: Color.black.opacity(0.10), radius: 12, x: 0, y: 4)
+        .allowsHitTesting(false)
     }
 }

@@ -17,9 +17,19 @@ final class CanvasController: ObservableObject {
     private var redoStack: [PKDrawing] = []
     private let limit = 60
 
+    /// 当前可撤销的步数：多点手势开始时记下，手势结束后把误触产生的撤销步丢掉
+    var historyDepth: Int { undoStack.count }
+
     func resetHistory() {
         undoStack.removeAll()
         redoStack.removeAll()
+        updateFlags()
+    }
+
+    /// 丢弃 depth 之后的撤销步（用于「两指点击」时手指误落在画布上留下的笔迹）
+    func truncateHistory(to depth: Int) {
+        guard depth >= 0, depth < undoStack.count else { return }
+        undoStack.removeLast(undoStack.count - depth)
         updateFlags()
     }
 
@@ -109,16 +119,31 @@ final class CanvasControllerPool: ObservableObject {
         refreshFlags()
     }
 
-    func undo() {
-        guard let id = activePageID else { return }
-        controllers[id]?.undo()
+    @discardableResult
+    func undo(pageID: UUID? = nil) -> Bool {
+        guard let id = pageID ?? activePageID else { return false }
+        // 手势可能在「非当前页」上触发（连续滚动），先切到该页让顶栏按钮状态跟着变
+        activate(id)
+        guard let controller = controllers[id], controller.canUndo else {
+            refreshFlags()
+            return false
+        }
+        controller.undo()
         refreshFlags()
+        return true
     }
 
-    func redo() {
-        guard let id = activePageID else { return }
-        controllers[id]?.redo()
+    @discardableResult
+    func redo(pageID: UUID? = nil) -> Bool {
+        guard let id = pageID ?? activePageID else { return false }
+        activate(id)
+        guard let controller = controllers[id], controller.canRedo else {
+            refreshFlags()
+            return false
+        }
+        controller.redo()
         refreshFlags()
+        return true
     }
 
     private func refreshFlags() {
@@ -135,11 +160,20 @@ final class CanvasControllerPool: ObservableObject {
 // MARK: - 会汇报触点的画布
 
 /// PKCanvasView 本身不暴露触点位置，这里子类化后再交给父类处理，
-/// 用于「放大书写时页面跟随笔尖自动平移」。
+/// 用于「放大书写时页面跟随笔尖自动平移」，以及记录多点手势的起点。
 final class TrackingCanvasView: PKCanvasView {
     var onTouch: ((CGPoint) -> Void)?
+    /// 第二根手指落下的瞬间回调（此时画布还没被 PencilKit 写入任何东西）
+    var onMultiTouchDown: (() -> Void)?
+
+    private var didReportMultiTouch = false
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        let total = max(touches.count, event?.allTouches?.count ?? 0)
+        if total >= 2, !didReportMultiTouch {
+            didReportMultiTouch = true
+            onMultiTouchDown?()
+        }
         super.touchesBegan(touches, with: event)
         if let point = touches.first?.location(in: self) { onTouch?(point) }
     }
@@ -147,6 +181,23 @@ final class TrackingCanvasView: PKCanvasView {
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
         super.touchesMoved(touches, with: event)
         if let point = touches.first?.location(in: self) { onTouch?(point) }
+    }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+        super.touchesEnded(touches, with: event)
+        resetMultiTouchIfIdle(event)
+    }
+
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+        super.touchesCancelled(touches, with: event)
+        resetMultiTouchIfIdle(event)
+    }
+
+    private func resetMultiTouchIfIdle(_ event: UIEvent?) {
+        let active = event?.allTouches?.filter {
+            $0.phase == .began || $0.phase == .moved || $0.phase == .stationary
+        } ?? []
+        if active.isEmpty { didReportMultiTouch = false }
     }
 }
 
@@ -181,6 +232,10 @@ struct DrawingCanvas: UIViewRepresentable {
     var dashWidth: CGFloat = 3
     /// 一笔结束（参数为当前页笔画总数），用于录音时间轴
     var onStrokeCommitted: ((Int) -> Void)? = nil
+    /// 两指点击 → 撤销（Notability 惯例，不拿笔也能用）
+    var onUndoTap: (() -> Void)? = nil
+    /// 三指点击 → 重做
+    var onRedoTap: (() -> Void)? = nil
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
@@ -198,6 +253,9 @@ struct DrawingCanvas: UIViewRepresentable {
         canvas.drawing = initialDrawing
 
         let coordinator = context.coordinator
+        // 关键：没有 delegate 就不会有 canvasViewDrawingDidChange，
+        // 撤销栈、自动保存、形状识别、虚线切分、录音笔迹打点全部不会触发
+        canvas.delegate = coordinator
         coordinator.canvas = canvas
         coordinator.currentPageID = pageID
         coordinator.toolKey = toolKey
@@ -214,6 +272,9 @@ struct DrawingCanvas: UIViewRepresentable {
         coordinator.trackingCanvas?.onTouch = { [weak coordinator] point in
             guard let coordinator, let canvas = coordinator.trackingCanvas else { return }
             coordinator.parent.onPenMove?(coordinator.normalize(point, in: canvas))
+        }
+        coordinator.trackingCanvas?.onMultiTouchDown = { [weak coordinator] in
+            coordinator?.beginMultiTouchGesture()
         }
 
         return canvas
@@ -271,6 +332,11 @@ struct DrawingCanvas: UIViewRepresentable {
         var doubleTap: UITapGestureRecognizer?
         weak var trackingCanvas: TrackingCanvasView?
 
+        /// 多点手势开始时的撤销栈深度与笔画数，用于清掉手指误落在画布上的笔迹
+        private var gestureMark: Int?
+        private var gestureBaseline: Int?
+        private var gestureStartedAt: Date?
+
         init(_ parent: DrawingCanvas) {
             self.parent = parent
             self.drawingPolicy = parent.fingerDrawing ? .anyInput : .pencilOnly
@@ -305,6 +371,19 @@ struct DrawingCanvas: UIViewRepresentable {
             tap.isEnabled = !parent.fingerDrawing
             canvas.addGestureRecognizer(tap)
             self.doubleTap = tap
+
+            // 两指点击 = 撤销，三指点击 = 重做（照 Notability 的手势，不拿笔也能用）
+            let undoTap = UITapGestureRecognizer(target: self, action: #selector(handleUndoTap(_:)))
+            undoTap.numberOfTouchesRequired = 2
+            undoTap.delegate = self
+            undoTap.cancelsTouchesInView = true
+            canvas.addGestureRecognizer(undoTap)
+
+            let redoTap = UITapGestureRecognizer(target: self, action: #selector(handleRedoTap(_:)))
+            redoTap.numberOfTouchesRequired = 3
+            redoTap.delegate = self
+            redoTap.cancelsTouchesInView = true
+            canvas.addGestureRecognizer(redoTap)
 
             let pencil = UIPencilInteraction()
             pencil.delegate = self
@@ -350,6 +429,58 @@ struct DrawingCanvas: UIViewRepresentable {
         @objc private func handleDoubleTap(_ gesture: UITapGestureRecognizer) {
             guard let canvas, let onDoubleTap = parent.onDoubleTap else { return }
             onDoubleTap(normalizedLocation(gesture.location(in: canvas), in: canvas))
+        }
+
+        // MARK: 两指撤销 / 三指重做
+
+        /// 第二根手指落下时记下「手势前」的状态
+        func beginMultiTouchGesture() {
+            guard let canvas else { return }
+            gestureMark = parent.controller.historyDepth
+            gestureBaseline = canvas.drawing.strokes.count
+            gestureStartedAt = Date()
+        }
+
+        @objc private func handleUndoTap(_ gesture: UITapGestureRecognizer) {
+            guard gesture.state == .ended else { return }
+            discardStrayDots()
+            parent.onUndoTap?()
+        }
+
+        @objc private func handleRedoTap(_ gesture: UITapGestureRecognizer) {
+            guard gesture.state == .ended else { return }
+            discardStrayDots()
+            parent.onRedoTap?()
+        }
+
+        /// 指写模式（fingerDrawing）下，两根手指落下可能先在画布上留下两个点。
+        /// 这里只清理「全是点状笔迹」的情况，并且要求刚落下就识别成手势，
+        /// 避免把真正画出来的笔迹当成误触删掉。
+        private func discardStrayDots() {
+            defer {
+                gestureMark = nil
+                gestureBaseline = nil
+                gestureStartedAt = nil
+            }
+            guard let canvas,
+                  let mark = gestureMark,
+                  let baseline = gestureBaseline,
+                  let startedAt = gestureStartedAt,
+                  Date().timeIntervalSince(startedAt) < 2.0 else { return }
+
+            let strokes = canvas.drawing.strokes
+            guard strokes.count > baseline else { return }
+
+            let added = strokes[baseline...]
+            guard added.allSatisfy(isStrayDot) else { return }
+
+            parent.controller.truncateHistory(to: mark)
+            applyProgrammatic(PKDrawing(strokes: Array(strokes.prefix(baseline))))
+        }
+
+        private func isStrayDot(_ stroke: PKStroke) -> Bool {
+            let box = stroke.renderBounds
+            return max(box.width, box.height) < 14
         }
 
         private func normalizedLocation(_ point: CGPoint, in canvas: PKCanvasView) -> CGPoint {
