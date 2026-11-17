@@ -82,22 +82,11 @@
 		</dict>
 	</array>
 
-	<!-- 备用 App 图标：两套都打进包里，运行时切换。名字对应 Assets.xcassets 里的 appiconset 名。 -->
-	<key>CFBundleIcons</key>
-	<dict>
-		<key>CFBundleAlternateIcons</key>
-		<dict>
-			<key>AppIconAI</key>
-			<dict>
-				<key>CFBundleIconFiles</key>
-				<array>
-					<string>AppIconAI</string>
-				</array>
-				<key>UIPrerenderedIcon</key>
-				<false/>
-			</dict>
-		</dict>
-	</dict>
+	<!-- 备用 App 图标不在这里手写：手写 CFBundleIconFiles 要求包里真有那个 png，
+	     否则 setAlternateIconName 之后系统找不到图，主屏会显示白底网格占位图。
+	     正确做法是 Assets.xcassets/AppIconAI.appiconset + 构建设置
+	     ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES，actool 会把
+	     CFBundleAlternateIcons 自动写进产物 plist。 -->
 
 	<!-- 长按图标的主屏快捷操作 -->
 	<key>UIApplicationShortcutItems</key>

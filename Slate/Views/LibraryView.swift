@@ -131,7 +131,10 @@ struct LibraryView: View {
             }
             .animation(.easeInOut(duration: 0.2), value: bannerMessage)
             // 冷启动的快捷操作、外部文档导入完成，都在这里消费
-            .task { consumePending() }
+            .task {
+                iconManager.repairIfNeeded()
+                consumePending()
+            }
             .onChange(of: opener.noteToOpen) { _, _ in consumePending() }
             .onReceive(NotificationCenter.default.publisher(for: .slateShortcutTriggered)) { _ in
                 consumePending()

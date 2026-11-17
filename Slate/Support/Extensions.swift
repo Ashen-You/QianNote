@@ -128,6 +128,33 @@ final class AppIconManager: ObservableObject {
     @Published private(set) var current: AppIconChoice = .current()
     @Published var errorMessage: String?
 
+    /// 包里真正声明过的备用图标名（CFBundleIcons.CFBundleAlternateIcons）。
+    ///
+    /// 这一条不能省：`setAlternateIconName` 只要名字被设置为非 nil 就会「成功」，
+    /// 系统之后却按这个名字去 Assets.car 里找图，找不到就退成白底网格占位图。
+    /// 之前 Info.plist 手写了 AppIconAI 但包里没这个文件，主屏就变成了网格。
+    private static func declaredAlternates() -> Set<String> {
+        let icons = Bundle.main.object(forInfoDictionaryKey: "CFBundleIcons") as? [String: Any]
+        guard let alternates = icons?["CFBundleAlternateIcons"] as? [String: Any] else { return [] }
+        return Set(alternates.keys)
+    }
+
+    /// 启动时自愈：已经停在「名字有、图没有」的坏状态下就退回主图标，
+    /// 否则用户会一直看着白底网格，且 App 里怎么切都救不回来。
+    func repairIfNeeded() {
+        guard let name = UIApplication.shared.alternateIconName else {
+            current = .default
+            return
+        }
+        guard !Self.declaredAlternates().contains(name) else {
+            current = AppIconChoice.current()
+            return
+        }
+        UIApplication.shared.setAlternateIconName(nil) { [weak self] _ in
+            Task { @MainActor in self?.current = .default }
+        }
+    }
+
     /// iOS 用系统弹窗确认切换，这里只负责调用。切完记录当前项供 UI 打勾。
     func select(_ choice: AppIconChoice) {
         guard UIApplication.shared.supportsAlternateIcons else {
@@ -135,6 +162,11 @@ final class AppIconManager: ObservableObject {
             return
         }
         guard choice != current else { return }
+        if let name = choice.alternateName,
+           !Self.declaredAlternates().contains(name) {
+            errorMessage = "这套图标没有打进当前安装包，先把这两张图加进 Assets 再试。"
+            return
+        }
         UIApplication.shared.setAlternateIconName(choice.alternateName) { [weak self] error in
             Task { @MainActor in
                 guard let self else { return }
