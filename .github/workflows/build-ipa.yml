@@ -8,7 +8,10 @@ on:
 
 jobs:
   build:
-    runs-on: macos-15
+    # Liquid Glass（Glass / .glassEffect）需要 iOS 26 SDK 编译，
+    # macos-15 自带的 Xcode 16.x 只有 iOS 18 SDK，会报 cannot find type 'Glass'。
+    # macos-26 默认 Xcode 26.6（iOS 26.5 SDK），能编译；运行时仍靠 #available 降级到 iOS 17。
+    runs-on: macos-26
 
     steps:
       - name: Checkout
