@@ -320,19 +320,29 @@ struct EditorView: View {
     }
 
     /// 面板下面的遮盖层：左边深、向右淡出，做出「面板在上面、页面在下面」的层次。
-    /// 只负责视觉，不吃触摸，免得打开面板就没法写字。
+    /// 面板打开时是模态的：点页面任意处（面板以外）就收起面板，比再回去点工具顺手。
     @ViewBuilder
     private var paletteScrim: some View {
-        // 手机上是从底部弹出的，不需要左侧那道渐变
         if !compact && showPalette && showRail {
             LinearGradient(colors: [Color.black.opacity(0.14),
                                     Color.black.opacity(0.04),
                                     .clear],
                            startPoint: .leading,
                            endPoint: .trailing)
-                .allowsHitTesting(false)
+                .contentShape(Rectangle())
+                .onTapGesture { closePalette() }
+                .transition(.opacity)
+        } else if compact && showPalette {
+            // 手机上面板从底部弹出，这里盖一层轻遮罩，点页面收起
+            Color.black.opacity(0.16)
+                .contentShape(Rectangle())
+                .onTapGesture { closePalette() }
                 .transition(.opacity)
         }
+    }
+
+    private func closePalette() {
+        withAnimation(.easeInOut(duration: 0.2)) { showPalette = false }
     }
 
     private func pageArea(_ note: Note) -> some View {
