@@ -27,6 +27,9 @@ struct NotePageView: View {
     /// 单指拖动页面（手指=拖动模式）
     var onFingerPan: ((CGSize) -> Void)? = nil
     var onFingerPanEnd: (() -> Void)? = nil
+    /// 手指单指是否用手势拖动页面。连续滚动模式下手指交给 ScrollView 原生滚动，
+    /// 这里应传 false；单页模式（放大平移 / 翻页）保持 true。
+    var fingerPans: Bool = true
 
     @State private var selectedTextID: UUID?
     /// 正在就地编辑的文字框（不再弹窗，退格 / 全选 / 输入法都走系统原生行为）
@@ -67,9 +70,10 @@ struct NotePageView: View {
         tools.handMode && onFingerPan != nil
     }
 
-    /// 手指是否单指拖动：iPad 上手指永远拖动（不写字）；iPhone 手指书写时才关闭
+    /// 手指是否单指拖动：iPad 上手指永远拖动（不写字），但连续滚动下交给 ScrollView，
+    /// 由调用方的 fingerPans 参数决定是否用手势拖动。
     private var fingerCanPan: Bool {
-        !tools.fingerCanDraw && onFingerPan != nil
+        fingerPans && !tools.fingerCanDraw && onFingerPan != nil
     }
 
     /// 笔是否单指拖动：手形模式下 Pencil 只拖不写

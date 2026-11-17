@@ -52,6 +52,8 @@ struct EditorView: View {
     /// 用它来同步 pageIndex，替代之前靠 onAppear 同步——后者在页面刚滚入视口边缘就触发，
     /// 导致滚动到两页中间时被 scrollTo(.center) 强行拽走（瞬移）。
     @State private var continuousPage: Int? = nil
+    /// 连续滚动 + 手形模式下，Pencil 单指拖动的累积位移（用于翻页）
+    @State private var flowSwipeAccum: CGFloat = 0
 
     enum EditorSheet: Identifiable {
         case share(URL)
@@ -446,28 +448,17 @@ struct EditorView: View {
             let width = max(geo.size.width - inset * 2, 1)
             let pageWidth = CGFloat(max(note.pageWidth, 1))
             let pageHeight = CGFloat(max(note.pageHeight, 1))
-            let scale = width / max(pageWidth, 1)
-            let renderedHeight = pageHeight * scale
+            // 基础适配：让页面宽度填满可用宽度；zoom 是用户缩放，作用在整个页面流上。
+            let fit = width / max(pageWidth, 1)
+            let renderedHeight = pageHeight * fit * zoom
 
             ScrollViewReader { proxy in
                 ScrollView(.vertical, showsIndicators: false) {
                     LazyVStack(spacing: immersive ? 8 : 18) {
                         ForEach(Array(note.pages.enumerated()), id: \.element.id) { index, page in
-                            NotePageView(note: note,
-                                         pageIndex: index,
-                                         tools: tools,
-                                         controller: controllers.controller(for: page.id),
-                                         pdfScale: 2.5,
-                                         shapeRecognition: tools.shapeRecognition,
-                                         onUndoTap: { gestureUndo(page.id) },
-                                         onRedoTap: { gestureRedo(page.id) })
-                                .frame(width: pageWidth, height: pageHeight)
-                                .scaleEffect(scale, anchor: .top)
-                                .frame(width: width, height: renderedHeight)
-                                .background(Color.white)
-                                .shadow(color: Color.black.opacity(immersive ? 0 : 0.12),
-                                        radius: immersive ? 0 : 12, x: 0, y: 4)
-                                .padding(.horizontal, inset)
+                            flowPage(note, page: page, index: index,
+                                     fit: fit, width: width, renderedHeight: renderedHeight,
+                                     inset: inset, proxy: proxy, geo: geo)
                                 .id(index)
                                 .onAppear {
                                     // 只负责把该页的撤销栈激活，页码同步交给 scrollPosition。
@@ -482,6 +473,7 @@ struct EditorView: View {
                     .padding(.top, immersive ? geo.safeAreaInsets.top : 16)
                     .padding(.bottom, immersive ? max(geo.safeAreaInsets.bottom, 16) : 16)
                 }
+                .offset(x: pan.width * zoom)
                 .scrollPosition(id: $continuousPage)
                 .onAppear {
                     // 首次进入定位：从缩略图/历史恢复到非第一页时，scrollPosition 初始为 nil，
@@ -515,6 +507,128 @@ struct EditorView: View {
                     }
                 }
             }
+        }
+    }
+
+    /// 连续滚动模式下的一页：NotePageView + 缩放 / 阴影 / 留白。
+    /// 拆成独立方法，避免单个体量过大的 ViewBuilder 表达式让编译器类型检查超时。
+    @ViewBuilder
+    private func flowPage(_ note: Note, page: NotePage, index: Int,
+                          fit: CGFloat, width: CGFloat, renderedHeight: CGFloat,
+                          inset: CGFloat, proxy: ScrollViewProxy, geo: GeometryProxy) -> some View {
+        let pageWidth = CGFloat(max(note.pageWidth, 1))
+        let pageHeight = CGFloat(max(note.pageHeight, 1))
+        NotePageView(note: note,
+                     pageIndex: index,
+                     tools: tools,
+                     controller: controllers.controller(for: page.id),
+                     pdfScale: pdfRenderScale(for: note.pageSize),
+                     onPinch: { delta, focal in
+                         applyFlowPinch(delta, focal: focal, viewport: geo.size)
+                     },
+                     onPan: { delta in
+                         applyFlowPan(delta, contentWidth: width * zoom, viewport: geo.size)
+                     },
+                     onDoubleTap: { focal in
+                         toggleFlowZoom(focal: focal, viewport: geo.size)
+                     },
+                     onPencilDoubleTap: {
+                         tools.togglePencilEraser()
+                     },
+                     shapeRecognition: tools.shapeRecognition,
+                     onPenMove: { _ in },
+                     onStrokeCommitted: nil,
+                     onUndoTap: { gestureUndo(page.id) },
+                     onRedoTap: { gestureRedo(page.id) },
+                     onFingerPan: { delta in
+                         flowPanToScroll(delta, proxy: proxy, pageCount: note.pages.count)
+                     },
+                     onFingerPanEnd: { flowSwipeAccum = 0 },
+                     fingerPans: false)
+            .frame(width: pageWidth, height: pageHeight)
+            .scaleEffect(fit * zoom, anchor: .top)
+            .frame(width: width, height: renderedHeight)
+            .background(Color.white)
+            .shadow(color: Color.black.opacity(immersive ? 0 : 0.12),
+                    radius: immersive ? 0 : 12, x: 0, y: 4)
+            .padding(.horizontal, inset)
+    }
+
+    // MARK: 连续滚动整体缩放（zoom 作用在整个页面流，而非单页）
+    //
+    // 坐标约定：zoom 是「未缩放 → 已缩放」的线性倍数，作用在容器的宽和高上。
+    //   - 容器尺寸：contentWidth  = 基础宽 × zoom
+    //               contentHeight = 基础高 × zoom（面积自然是 × zoom²，平方关系自动成立）
+    //   - 偏移量 pan 存「未缩放坐标」，渲染时 × zoom。
+    //     这样平移 60px 时若 zoom=6，实际屏幕偏移是 360px；缩回 zoom=1 时就是 10px，位置一致。
+
+    /// 双指捏合：围绕捏合中心缩放整个页面流。纵向滚动交给 ScrollView，
+    /// 这里只处理水平平移（放大后页面变宽，需要横向平移查看）。
+    private func applyFlowPinch(_ delta: CGFloat, focal: CGPoint, viewport: CGSize) {
+        let old = zoom
+        let new = min(max(old * delta, 1), 6)
+        guard abs(new - old) > 0.0005 else { return }
+
+        // 围绕捏合中心缩放：保持焦点在屏幕上不动。用未缩放坐标算偏移。
+        // 焦点在屏幕上的比例是 focal.x；缩放后要保持焦点不动，偏移量要相应调整。
+        let contentW = viewport.width          // 未缩放内容宽度（1 倍时的视口宽）
+        let k = new / old
+        // 未缩放坐标系下的偏移增量：屏幕上焦点偏移 = 内容宽 × (k-1) × (0.5 - focal)
+        // 再除 new 归一到未缩放坐标
+        pan.width += contentW * (k - 1) * (0.5 - focal.x) / new
+
+        zoom = new
+        if new <= 1.001 {
+            pan = .zero
+        }
+        pan = clampedFlowPan(viewport: viewport)
+    }
+
+    /// 双指拖动：放大后水平平移页面流（纵向由 ScrollView 原生滚动负责）。
+    /// delta 是屏幕像素，除以 zoom 归一到未缩放坐标。
+    private func applyFlowPan(_ delta: CGSize, contentWidth: CGFloat, viewport: CGSize) {
+        guard zoom > 1.001 else { return }
+        pan.width += delta.width / zoom
+        pan = clampedFlowPan(viewport: viewport)
+    }
+
+    private func toggleFlowZoom(focal: CGPoint, viewport: CGSize) {
+        if zoom > 1.05 {
+            withAnimation(.easeOut(duration: 0.24)) { resetZoom() }
+            return
+        }
+        let target: CGFloat = 2.2
+        let contentW = viewport.width
+        var newPanX = pan.width + contentW * (target - 1) * (0.5 - focal.x) / target
+        withAnimation(.easeOut(duration: 0.24)) {
+            zoom = target
+            pan = CGSize(width: newPanX, height: 0)
+        }
+        pan = clampedFlowPan(viewport: viewport)
+    }
+
+    /// 限制水平平移范围（未缩放坐标），避免放大后的页面流被拖出左右边缘。
+    /// 可平移的最大未缩放偏移 = (内容宽 - 视口宽) / 2，再除 zoom 归一到未缩放坐标。
+    private func clampedFlowPan(viewport: CGSize) -> CGSize {
+        let maxX = max(0, (viewport.width * zoom - viewport.width) / 2 / zoom)
+        return CGSize(width: min(max(pan.width, -maxX), maxX), height: 0)
+    }
+
+    /// 手形模式下 Pencil 单指拖动整个页面流：累积位移翻页。
+    /// iOS 17 的 ScrollViewProxy 没有增量滚动 API，只能按 id 跳页，这里累积位移触发翻页。
+    private func flowPanToScroll(_ delta: CGSize, proxy: ScrollViewProxy, pageCount: Int) {
+        flowSwipeAccum += delta.height
+        guard abs(flowSwipeAccum) > 96 else { return }
+        let dir = flowSwipeAccum < 0 ? 1 : -1
+        flowSwipeAccum = 0
+        let target = pageIndex + dir
+        guard target >= 0, target < pageCount else { return }
+        isProgrammaticScroll = true
+        withAnimation(.easeInOut(duration: 0.2)) {
+            proxy.scrollTo(target, anchor: .center)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.28) {
+            isProgrammaticScroll = false
         }
     }
 
