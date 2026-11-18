@@ -30,7 +30,7 @@ if [[ "${1:-}" == "--signed" ]]; then
     exit 1
   fi
 
-  echo "==> 归档（Team: $TEAM_ID）"
+  echo "==> 归档（Team: ${TEAM_ID}）"
   xcodebuild archive \
     -project "$PROJECT" \
     -scheme "$SCHEME" \
@@ -100,5 +100,5 @@ cp -R "$APP" "$BUILD_DIR/Payload/"
 ( cd "$BUILD_DIR" && zip -qry "QianNote-unsigned.ipa" Payload )
 
 echo
-echo "完成：$IPA_UNSIGNED（$(du -h "$IPA_UNSIGNED" | cut -f1)）"
+echo "完成：${IPA_UNSIGNED}（$(du -h "$IPA_UNSIGNED" | cut -f1)）"
 echo "下一步：用 Sideloadly / AltStore / 爱思助手 导入该 IPA，填自己的 Apple ID 签名后装到 iPad。"
