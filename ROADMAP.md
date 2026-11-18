@@ -1,7 +1,7 @@
 # Qian's Note vs Notability — 差距对照与实施路线
 
 > 对照基准：Notability 2026（iPadOS 版）。本文件只记录**能力差距、实施顺序与关键取舍**，不重复 README 里的完整功能清单。
-> 当前版本：**v2.1.1（build 17）**。Step 1–11 的主体已完成；连续滚动在 v2.1.0 重写为整本共享画布；v2.0.0 移除录音与逐笔回放，v2.1.1 移除手写 OCR。
+> 当前版本：**v2.1.2（build 18）**。Step 1–11 的主体已完成；连续滚动在 v2.1.0 重写为整本共享画布；v2.0.0 移除录音与逐笔回放，v2.1.1 移除手写 OCR，v2.1.2 修复连续滚动下 Pencil 无法书写。
 
 ## 一、当前能力对照
 
@@ -75,6 +75,7 @@
 | v2.0.0 | 移除录音与逐笔回放；精简顶栏与菜单；保留备份恢复与文字框 |
 | v2.1.0 | 连续滚动重写为整本共享画布：单一滚动权威、跨页无断层、消除滚动频闪 |
 | v2.1.1 | 拖动并入工具列表，修复 iPad 上停在拖动工具导致写不出字；移除手写 OCR；资料库筛选条固定于列表上方，修复筛选 chip 点不动；iPad UI 回归 37 项全绿；build 17 |
+| v2.1.2 | 修复连续滚动模式下 Pencil 触摸被 UIScrollView 平移手势抢走、选任何笔都只能拖页的问题；build 18 |
 
 ## 三、已完成路线
 
@@ -200,6 +201,14 @@
 - 测试可见性：`-uiTestResetData` 启动即清空存储；`InkProbe` 增加连续滚动模式探针，切页时同步读数（跨页比较不再拿旧页数据）；资料库新增 `libraryProbe` 暴露收藏筛选状态
 - UI 套件扩充到 37 项：新增 `ChaosRound1Tests` / `ChaosRound2Tests`，重写 `CanvasInteractionTests`，`EditorFeatureTests` 增至 11 项，修正 `test05` 随机翻页与读数不同页的误判
 - 新增双 iPad 分片脚本 `Scripts/run_uitests_pair.sh`：两波并行、开着的模拟器不重启，只重装 App 与 Runner；37 项在两台 iPad 上全部通过
+
+### Step 15 v2.1.2 连续滚动下 Pencil 书写修复
+
+- 症状：Apple Pencil 在任何笔种下都只能拖动页面，写不出任何字（连续滚动为默认模式，影响面最大）
+- 根因：共享画布的 `UIScrollView.panGestureRecognizer` 未限制触摸类型，系统默认同时接受 Pencil；笔一落纸，滚动与 PencilKit 绘制手势同时识别，滚动抢先，笔迹被吞
+- 修法：笔可书写时（非拖动工具）把滚动手势的 `allowedTouchTypes` 收紧为仅手指；拖动工具下才放行 Pencil 拖页；手指书写（双指滚动）规则保持不变
+- 模拟器无法注入 Pencil 事件，回归覆盖手指路径（37 项全绿），Pencil 路径需真机确认
+- 版本号 2.1.2 / build 18
 
 ## 四、明确不做
 
