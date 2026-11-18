@@ -18,16 +18,18 @@ enum DocumentImportError: LocalizedError {
 }
 
 /// 把 Word / RTF / HTML / 纯文本 / 图片转成 PDF，复用现有的 PDF 笔记管线。
+/// WKWebView 只能在主线程使用，因此整个导入器由 MainActor 隔离。
+@MainActor
 final class DocumentImporter: NSObject {
 
     static let shared = DocumentImporter()
 
-    static let supportedExtensions: [String] = [
+    nonisolated static let supportedExtensions: [String] = [
         "pdf", "doc", "docx", "rtf", "rtfd", "html", "htm", "txt", "md", "csv",
         "png", "jpg", "jpeg", "heic", "heif", "webp", "gif", "tiff", "bmp"
     ]
 
-    static func isSupported(_ url: URL) -> Bool {
+    nonisolated static func isSupported(_ url: URL) -> Bool {
         supportedExtensions.contains(url.pathExtension.lowercased())
     }
 
@@ -41,7 +43,10 @@ final class DocumentImporter: NSObject {
         case "pdf":
             return url
         case "png", "jpg", "jpeg", "heic", "heif", "webp", "gif", "tiff", "bmp":
-            return try imageToPDF(url: url)
+            // 图片解码 + PDF 渲染可能很重，放到后台，别让主线程卡住
+            return try await Task.detached(priority: .userInitiated) {
+                try Self.imageToPDF(url: url)
+            }.value
         default:
             return try await webToPDF(url: url)
         }
@@ -49,7 +54,7 @@ final class DocumentImporter: NSObject {
 
     // MARK: - 图片 → PDF
 
-    private func imageToPDF(url: URL) throws -> URL {
+    nonisolated private static func imageToPDF(url: URL) throws -> URL {
         guard let data = try? Data(contentsOf: url), let image = UIImage(data: data) else {
             throw DocumentImportError.renderFailed
         }
@@ -79,27 +84,28 @@ final class DocumentImporter: NSObject {
     // MARK: - Office / 文本 → PDF
 
     private func webToPDF(url: URL) async throws -> URL {
-        let view: WKWebView = await MainActor.run {
-            // 放在屏幕外而不是 isHidden：隐藏的 WebView 有时渲染不出内容
-            let webView = WKWebView(frame: CGRect(x: -3000, y: -3000, width: 612, height: 792))
-            webView.navigationDelegate = self
-            let window = UIApplication.shared.connectedScenes
-                .compactMap { $0 as? UIWindowScene }
-                .flatMap { $0.windows }
-                .first { $0.isKeyWindow }
-            window?.addSubview(webView)
-            return webView
-        }
+        // 放在屏幕外而不是 isHidden：隐藏的 WebView 有时渲染不出内容
+        let view = WKWebView(frame: CGRect(x: -3000, y: -3000, width: 612, height: 792))
+        view.navigationDelegate = self
+        let window = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap { $0.windows }
+            .first { $0.isKeyWindow }
+        window?.addSubview(view)
         self.webView = view
 
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            navigationContinuation = continuation
-            DispatchQueue.main.async {
+        do {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                navigationContinuation = continuation
                 view.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
+                Task { @MainActor [weak self] in
+                    try? await Task.sleep(for: .seconds(18))
+                    self?.finishNavigation(error: DocumentImportError.renderFailed)
+                }
             }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 18) { [weak self] in
-                self?.finishNavigation(error: DocumentImportError.renderFailed)
-            }
+        } catch {
+            cleanup()
+            throw error
         }
 
         let data: Data
@@ -107,10 +113,8 @@ final class DocumentImporter: NSObject {
             data = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Data, Error>) in
                 view.createPDF(configuration: WKPDFConfiguration()) { result in
                     switch result {
-                    case .success(let pdfData):
-                        continuation.resume(returning: pdfData)
-                    case .failure(let error):
-                        continuation.resume(throwing: error)
+                    case .success(let pdfData): continuation.resume(returning: pdfData)
+                    case .failure(let error): continuation.resume(throwing: error)
                     }
                 }
             }

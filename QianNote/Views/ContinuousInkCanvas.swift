@@ -77,6 +77,8 @@ struct ContinuousInkCanvas<Background: View>: UIViewRepresentable {
         let canvas = InkCanvasView()
         /// 首帧 bounds 还是 0，fit 会算成 0（内容被缩到看不见），必须等真实尺寸出来再补一次
         var onLayout: (() -> Void)?
+        /// 只在上一次通知后尺寸真的变了才回调，避免 layout → 改缩放 → 再 layout 的反馈循环
+        private var lastLayoutSize: CGSize = .zero
 
         override init(frame: CGRect) {
             super.init(frame: frame)
@@ -115,6 +117,8 @@ struct ContinuousInkCanvas<Background: View>: UIViewRepresentable {
             super.layoutSubviews()
             guard bounds.width > 1, bounds.height > 1 else { return }
             if scroll.frame != bounds { scroll.frame = bounds }
+            guard bounds.size != lastLayoutSize else { return }
+            lastLayoutSize = bounds.size
             onLayout?()
         }
     }
@@ -268,6 +272,12 @@ struct ContinuousInkCanvas<Background: View>: UIViewRepresentable {
             appliedPageSize = logical
             appliedPageCount = parent.pageCount
 
+            // 这是由布局/外部状态驱动的尺寸同步，期间产生的 scroll 回调不能反过来
+            // 写 currentPage，否则会在一次布局里触发 SwiftUI 重算，形成反馈循环。
+            let wasSyncing = isSyncing
+            isSyncing = true
+            defer { isSyncing = wasSyncing }
+
             // 关键：UIScrollView 是用 **transform** 放大 zoom 视图的。
             // 在带 transform 的视图上写 frame，UIKit 会反推出 bounds = frame / scale，
             // 内容尺寸就被莫名缩掉了（背景变小、墨迹错位、滚动范围乱跳）。
@@ -278,9 +288,10 @@ struct ContinuousInkCanvas<Background: View>: UIViewRepresentable {
             view.contentView.frame = CGRect(origin: .zero, size: logical)
             if transform != .identity { view.contentView.transform = transform }
 
-            // 背景与画布是 contentView 的子视图，frame 在它的坐标空间里，不受 transform 影响
+            // 背景与画布是 contentView 的子视图，frame 在它的坐标空间里，不受 transform 影响。
+            // 改 frame 本身就会标脏布局，不要再手动 setNeedsLayout —— 那会在
+            // layoutSubviews 内部又请求一次布局，形成 observation 反馈循环。
             host?.view.frame = CGRect(origin: .zero, size: logical)
-            host?.view.setNeedsLayout()
 
             view.canvas.frame = CGRect(origin: .zero, size: logical)
             view.canvas.contentSize = logical
@@ -301,13 +312,19 @@ struct ContinuousInkCanvas<Background: View>: UIViewRepresentable {
         /// 否则 layout 每帧回调都会重设 zoomScale，把 setContentOffset 打回原位（这就是「滚动被拽走」）。
         private func applyZoom(in view: ContainerView, force: Bool) {
             guard view.bounds.width > 1 else { return }
+            // 缩放是程序化变更，期间不要从 scrollViewDidScroll 反写页码
+            let wasSyncing = isSyncing
+            isSyncing = true
+            defer { isSyncing = wasSyncing }
             let fit = fitScale(in: view)
             let level = clampZoomLevel(parent.zoom)
             let target = fit * level
 
-            // 必须先放开区间再设 zoomScale，否则 1...1 的默认区间会把它夹回 1
-            view.scroll.minimumZoomScale = fit
-            view.scroll.maximumZoomScale = fit * 6
+            // 必须先放开区间再设 zoomScale，否则 1...1 的默认区间会把它夹回 1。
+            // 值没变就不要重复写，否则每次 SwiftUI 刷新都可能再触发一轮布局。
+            if view.scroll.minimumZoomScale != fit { view.scroll.minimumZoomScale = fit }
+            let maxScale = fit * 6
+            if view.scroll.maximumZoomScale != maxScale { view.scroll.maximumZoomScale = maxScale }
 
             // 正在双指捏合时不要去改 zoomScale，会跟原生缩放打架（手感变抖、跳帧）
             guard !isPinching || force else { return }
@@ -419,21 +436,33 @@ struct ContinuousInkCanvas<Background: View>: UIViewRepresentable {
 
         func canvasViewDidEndUsingTool(_ canvasView: PKCanvasView) {
             isWriting = false
-            scheduleSave(canvasView.drawing)
+            scheduleSave()
         }
 
         /// 选中过程不落盘：整本笔记的墨迹切分一次要重建几百条笔迹，
-        /// 每 0.2 秒跑一次会拖慢书写。抬笔（EndUsingTool）时保存一次就够，
-        /// 中间丢失的也只是「还没抬笔的那一笔」，与 PencilKit 自身的语义一致。
+        /// 每 0.2 秒跑一次会拖慢书写。抬笔（EndUsingTool）时保存一次就够。
+        ///
+        /// 但 PencilKit 不是「抬笔即提交」：`DidEndUsingTool` 时 drawing 里往往还没有这一笔，
+        /// 十毫秒后才通过 `DrawingDidChange` 补进来。所以除了抬笔，这里也要在
+        /// 非书写状态下的变更里补一次保存——只靠抬笔那条路会把刚提交的笔画漏掉。
         func canvasViewDrawingDidChange(_ canvasView: PKCanvasView) {
-            guard !isApplyingDrawing else { return }
+            guard !isApplyingDrawing, !isWriting else { return }
+            scheduleSave()
         }
 
-        private func scheduleSave(_ drawing: PKDrawing) {
+        /// 防抖保存。**必须在此刻重新读画布**，不能捕获抬笔时的快照：
+        /// 快照可能还是空画布，回写给 SwiftUI 后 `syncFromSwiftUI` 又会把它盖回画布，
+        /// 刚写的那一笔就被自己擦掉了。
+        private func scheduleSave() {
             pendingSave?.cancel()
             let work = DispatchWorkItem { [weak self] in
-                guard let self else { return }
-                self.parent.onDrawingChange(drawing)
+                guard let self, let canvas = self.container?.canvas else { return }
+                // 防抖窗口里又落笔了：等这一笔抬完再统一保存
+                if self.isWriting {
+                    self.scheduleSave()
+                    return
+                }
+                self.parent.onDrawingChange(canvas.drawing)
             }
             pendingSave = work
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: work)

@@ -513,8 +513,8 @@ final class NoteStore: ObservableObject {
         let maxWidth: CGFloat = 520
         let inkScale = min(1, PageRenderer.outputScale(note: note, maxWidth: maxWidth))
         let baseKey = baseLayerKey(noteID: noteID, pageID: pageID, pageIndex: pageIndex,
-                                   note: note, maxWidth: maxWidth) as NSString
-        let cachedBase = baseLayerCache.object(forKey: baseKey)
+                                   note: note, maxWidth: maxWidth)
+        let cachedBase = baseLayerCache.object(forKey: baseKey as NSString)
         let url = thumbnailURL(noteID: noteID, pageID: pageID)
 
         lastThumbnailAt[pageID] = Date()
@@ -541,7 +541,7 @@ final class NoteStore: ObservableObject {
                 guard let self else { return }
                 self.thumbnailInFlight.remove(pageID)
                 if cachedBase == nil {
-                    self.baseLayerCache.setObject(base, forKey: baseKey)
+                    self.baseLayerCache.setObject(base, forKey: baseKey as NSString)
                 }
                 self.thumbnailCache.setObject(rendered, forKey: pageID.uuidString as NSString)
                 self.thumbnailVersions[pageID, default: 0] += 1
