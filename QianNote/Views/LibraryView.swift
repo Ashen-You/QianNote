@@ -232,6 +232,7 @@ struct LibraryView: View {
             Image(systemName: "plus")
                 .font(.headline)
         }
+        .accessibilityLabel("新建")
     }
 
     // MARK: - 文件夹筛选

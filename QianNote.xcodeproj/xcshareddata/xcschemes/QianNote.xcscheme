@@ -38,6 +38,16 @@
                ReferencedContainer = "container:QianNote.xcodeproj">
             </BuildableReference>
          </TestableReference>
+         <TestableReference
+            skipped = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "C0FFEE0000000000000000B5"
+               BuildableName = "QianNoteUITests.xctest"
+               BlueprintName = "QianNoteUITests"
+               ReferencedContainer = "container:QianNote.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
       </Testables>
    </TestAction>
    <LaunchAction

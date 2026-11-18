@@ -189,6 +189,7 @@ struct EditorView: View {
         .onChange(of: pageIndex) { _, newValue in
             if let page = note.pages[safe: newValue] {
                 controllers.activate(page.id)
+            } else {
             }
         }
         .onChange(of: note.pages.count) { _, newCount in
@@ -432,7 +433,7 @@ struct EditorView: View {
             globalDrawing: sharedInk,
             tool: tools.pkTool,
             toolKey: tools.toolKey,
-            isDrawingEnabled: !tools.handMode,
+            isDrawingEnabled: !tools.isHandTool,
             fingerDrawing: tools.fingerCanDraw,
             shapeRecognition: tools.shapeRecognition,
             isSourceEligibleForSnap: tools.activeTool.supportsShapeSnap && !tools.activeTool.isDashed,
@@ -829,6 +830,12 @@ struct EditorView: View {
             }
 
             Menu {
+                Toggle(isOn: $tools.fingerDrawing) {
+                    Label("手指书写", systemImage: tools.fingerDrawing ? "hand.draw.fill" : "hand.draw")
+                }
+
+                Divider()
+
                 Button {
                     showPhotoPicker = true
                 } label: {
@@ -883,9 +890,6 @@ struct EditorView: View {
                         Label("连续滚动", systemImage: "rectangle.stack")
                     }
                 }
-                Toggle(isOn: $tools.handMode) {
-                    Label("拖动模式（笔也不写字）", systemImage: "hand.point.up.left")
-                }
                 Button {
                     exportPDF()
                 } label: {
@@ -899,6 +903,7 @@ struct EditorView: View {
                     .foregroundStyle(Color.primary.opacity(0.75))
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("更多")
         }
         .padding(.horizontal, compact ? 10 : 14)
         .padding(.vertical, compact ? 6 : 8)
@@ -940,11 +945,16 @@ struct EditorView: View {
             .buttonStyle(.plain)
             .disabled(pageIndex == 0)
             .opacity(pageIndex == 0 ? 0.3 : 0.8)
+            .accessibilityLabel("上一页")
+            .accessibilityIdentifier("prevPage")
 
             Text("\(pageIndex + 1) / \(note.pages.count)")
                 .font(.system(.subheadline, design: .rounded).weight(.semibold))
                 .monospacedDigit()
                 .frame(minWidth: 54)
+                // 稳定的可访问性标识：界面上不止一处「N / M」样式的文本，
+                // 自动化测试要靠它精确读到这一处
+                .accessibilityIdentifier("pageIndicator")
 
             Button {
                 pageIndex = min(note.pages.count - 1, pageIndex + 1)
@@ -956,6 +966,8 @@ struct EditorView: View {
             .buttonStyle(.plain)
             .disabled(pageIndex >= note.pages.count - 1)
             .opacity(pageIndex >= note.pages.count - 1 ? 0.3 : 0.8)
+            .accessibilityLabel("下一页")
+            .accessibilityIdentifier("nextPage")
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
@@ -1032,16 +1044,6 @@ struct EditorView: View {
                         }
                     }
 
-                    Toggle(isOn: $tools.handMode) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("拖动模式").font(.subheadline)
-                            Text("开启后手指和 Apple Pencil 都只拖动页面（放大时平移，1× 时上下拖动翻页），不写字；手指平时就一直是拖动，点任意笔立刻回到书写")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    .padding(.top, 6)
-
                     VStack(alignment: .leading, spacing: 9) {
                         Text("手势")
                             .font(.subheadline.weight(.semibold))
@@ -1051,7 +1053,7 @@ struct EditorView: View {
 
                         gestureRow("两指点击", "撤销")
                         gestureRow("三指点击", "重做")
-                        gestureRow("单指拖动", "平移 / 翻页（手指始终如此，拖动模式下 Pencil 同样适用）")
+                        gestureRow("单指拖动", "平移 / 翻页（手指始终如此；选「拖动」工具时 Pencil 也如此）")
                         gestureRow("双指捏合 / 拖动", "缩放 / 平移")
                         gestureRow("双击（指写模式除外）", "整页 ↔ 2.2×")
                     }

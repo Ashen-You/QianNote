@@ -8,19 +8,18 @@ struct ToolRailView: View {
     /// 收起工具栏（浮层模式下留一颗箭头，收起来后页面整块可用）
     var onCollapse: () -> Void = {}
 
-    /// 手形 / 拖动模式：激活后手指和 Pencil 都只拖页面 / 翻页，谁都不写字
-    private var isHandActive: Bool { tools.handMode }
+    /// 拖动工具就是工具箱里的一件工具：选中它时谁都不写字，点任意一支笔即回到书写。
+    private var isHandActive: Bool { tools.isHandTool }
 
     /// 刚刚长按过的工具。长按松手时 Button 的 tap 动作还会再触发一次，
     /// 用它把这一次「点」吃掉，否则长按开面板会立刻被当成点击关掉。
     @State private var longPressedTool: ToolKind?
-    @State private var longPressedHand = false
 
     var body: some View {
         VStack(spacing: 4) {
             handButton
             separator
-            ForEach(ToolKind.allCases) { tool in
+            ForEach(ToolKind.drawingTools) { tool in
                 toolButton(tool)
             }
             separator
@@ -37,22 +36,14 @@ struct ToolRailView: View {
             .padding(.vertical, 3)
     }
 
-    /// 手：点一下进拖动模式（笔也变成拖动），再点一下回到上一支笔。
-    /// 手拖和笔是互斥的两个状态，点哪个就是哪个，不弹面板。
+    /// 拖动工具：点一下即选中它（Pencil 也变成拖动），点任意一支笔回到书写。
+    /// 它和笔是同一组互斥状态，所以不需要「再点一下取消」——工具没有取消态。
     private var handButton: some View {
         Button {
-            if longPressedHand {
-                longPressedHand = false
-                return
-            }
-            // 切到拖动：顺手把面板收起来（拖动没有颜色/粗细可调）
-            if !isHandActive {
-                tools.handMode = true
-                withAnimation(.easeInOut(duration: 0.18)) { showPalette = false }
-            } else {
-                // 再点一下 = 回到上一支笔，继续改写
-                tools.handMode = false
-            }
+            // 切到拖动：顺手把面板收起来（拖动没有颜色 / 粗细可调）
+            guard !isHandActive else { return }
+            tools.activeTool = .hand
+            withAnimation(.easeInOut(duration: 0.18)) { showPalette = false }
         } label: {
             ZStack {
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -66,17 +57,9 @@ struct ToolRailView: View {
             .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
         .buttonStyle(.plain)
-        .simultaneousGesture(
-            LongPressGesture(minimumDuration: 0.45).onEnded { _ in
-                longPressedHand = true
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                // 长按手：直接回到书写并展开面板
-                tools.handMode = false
-                withAnimation(.easeInOut(duration: 0.18)) { showPalette = true }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { longPressedHand = false }
-            }
-        )
-        .accessibilityLabel(isHandActive ? "拖动模式（点击回到书写）" : "拖动模式：手指和 Pencil 都拖动页面")
+        .accessibilityLabel("拖动工具")
+        .accessibilityValue(isHandActive ? "已选中" : "未选中")
+        .accessibilityHint("选中后手指和 Apple Pencil 都只拖动页面，不写字")
     }
 
     private var collapseButton: some View {
@@ -92,8 +75,7 @@ struct ToolRailView: View {
     }
 
     private func toolButton(_ tool: ToolKind) -> some View {
-        // 手拖模式下所有书写工具都算「未选中」，点一下即回到书写
-        let isActive = tools.activeTool == tool && !tools.handMode
+        let isActive = tools.activeTool == tool
 
         return Button {
             // 长按松手会再触发一次点击，这里把那次吃掉
@@ -101,9 +83,8 @@ struct ToolRailView: View {
                 longPressedTool = nil
                 return
             }
-            // 点 = 换笔 + 退出拖动模式，**不弹面板**：换笔是高频动作，弹面板反而挡视线
+            // 点 = 换笔，**不弹面板**：换笔是高频动作，弹面板反而挡视线
             tools.activeTool = tool
-            tools.handMode = false
             if showPalette {
                 withAnimation(.easeInOut(duration: 0.18)) { showPalette = false }
             }
@@ -134,7 +115,6 @@ struct ToolRailView: View {
             LongPressGesture(minimumDuration: 0.45).onEnded { _ in
                 longPressedTool = tool
                 tools.activeTool = tool
-                tools.handMode = false
                 UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                 withAnimation(.easeInOut(duration: 0.18)) { showPalette = true }
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { longPressedTool = nil }
@@ -158,8 +138,8 @@ struct CompactToolBar: View {
 
     @State private var longPressedTool: ToolKind?
 
-    /// 手拖模式：整页进入纯导航，手指和 Pencil 都只拖页面
-    private var isHandActive: Bool { tools.handMode }
+    /// 拖动工具：整页进入纯导航，手指和 Pencil 都只拖页面
+    private var isHandActive: Bool { tools.isHandTool }
 
     var body: some View {
         HStack(spacing: 6) {
@@ -169,7 +149,7 @@ struct CompactToolBar: View {
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 2) {
-                    ForEach(ToolKind.allCases) { tool in
+                    ForEach(ToolKind.drawingTools) { tool in
                         toolButton(tool)
                     }
                 }
@@ -194,12 +174,9 @@ struct CompactToolBar: View {
 
     private var handButton: some View {
         Button {
-            if !isHandActive {
-                tools.handMode = true
-                withAnimation(.easeInOut(duration: 0.18)) { showPalette = false }
-            } else {
-                tools.handMode = false
-            }
+            guard !isHandActive else { return }
+            tools.activeTool = .hand
+            withAnimation(.easeInOut(duration: 0.18)) { showPalette = false }
         } label: {
             Image(systemName: isHandActive ? "hand.point.up.left.fill" : "hand.point.up.left")
                 .font(.system(size: 17, weight: .medium))
@@ -212,11 +189,12 @@ struct CompactToolBar: View {
                 .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(isHandActive ? "拖动模式（点击回到书写）" : "进入拖动模式")
+        .accessibilityLabel("拖动工具")
+        .accessibilityValue(isHandActive ? "已选中" : "未选中")
     }
 
     private func toolButton(_ tool: ToolKind) -> some View {
-        let isActive = tools.activeTool == tool && !tools.handMode
+        let isActive = tools.activeTool == tool
 
         return Button {
             if longPressedTool == tool {
@@ -224,7 +202,6 @@ struct CompactToolBar: View {
                 return
             }
             tools.activeTool = tool
-            tools.handMode = false
             if showPalette {
                 withAnimation(.easeInOut(duration: 0.18)) { showPalette = false }
             }
@@ -254,7 +231,6 @@ struct CompactToolBar: View {
             LongPressGesture(minimumDuration: 0.45).onEnded { _ in
                 longPressedTool = tool
                 tools.activeTool = tool
-                tools.handMode = false
                 UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                 withAnimation(.easeInOut(duration: 0.18)) { showPalette = true }
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { longPressedTool = nil }

@@ -390,7 +390,7 @@ struct DrawingCanvas: UIViewRepresentable {
     /// 手指单指拖动页面：iPad 上手指永远是拖动（翻页 / 平移），恒为 true；
     /// iPhone 无 Pencil 时关闭，让手指用来书写。
     var fingerPans: Bool = false
-    /// 笔单指拖动页面：手形 / 拖动模式（handMode）下为 true，此时 Pencil 只拖不写；
+    /// 笔单指拖动页面：选中「拖动」工具时为 true，此时 Pencil 只拖不写；
     /// 平时选了笔则为 false，Pencil 正常写字。
     var pencilPans: Bool = false
     var onFingerPan: ((CGSize) -> Void)? = nil
@@ -803,9 +803,16 @@ struct DrawingCanvas: UIViewRepresentable {
 
         func canvasViewDrawingDidChange(_ canvasView: PKCanvasView) {
             guard !isProgrammatic else { return }
+            // 笔抬起之后，新墨迹有时要等到下一帧才进 canvasView.drawing
+            //（canvasViewDidEndUsingTool 那一刻拿到的还是落笔前的旧图）。
+            // 撤销步骤必须建立在「落笔前」与「落笔后」两张图上，
+            // 所以这里补记：等真的拿到含新笔的 drawing 再入栈，否则撤销会撤了个寂寞。
+            if !isUsingTool, let before = drawingBeforeTool {
+                drawingBeforeTool = nil
+                parent.controller.record(previous: before, current: canvasView.drawing)
+            }
             // 书写过程中这个回调会连续触发，每次都 dataRepresentation + 落盘会卡住主线程，
-            // 表现为「盯着手指写，笔迹写到一半就断了」。这里合并成 0.25 秒写一次，
-            // 撤销步骤则按「一笔 / 一次擦除」在抬笔时记录。
+            // 表现为「盯着手指写，笔迹写到一半就断了」。这里合并成 0.25 秒写一次。
             scheduleSave(canvasView)
             scheduleShapeSnap(in: canvasView)
         }
@@ -821,19 +828,21 @@ struct DrawingCanvas: UIViewRepresentable {
 
         func canvasViewDidEndUsingTool(_ canvasView: PKCanvasView) {
             isUsingTool = false
-            let before = drawingBeforeTool ?? canvasView.drawing
-            drawingBeforeTool = nil
 
-            var result = canvasView.drawing
             if isDashed, let dashed = makeDashed(canvasView) {
-                result = dashed
-                parent.controller.record(previous: before, current: result)
-                applyProgrammatic(result, notify: false)
-            } else {
-                parent.controller.record(previous: before, current: result)
+                let before = drawingBeforeTool ?? canvasView.drawing
+                drawingBeforeTool = nil
+                parent.controller.record(previous: before, current: dashed)
+                applyProgrammatic(dashed, notify: false)
+                flushSave(dashed)
+                scheduleShapeSnap(in: canvasView)
+                applyPendingProgrammatic()
+                return
             }
 
-            flushSave(result)
+            // 普通笔：撤销的记账交给 canvasViewDrawingDidChange（那时才有新墨迹）。
+            // drawingBeforeTool 故意留着，等那次回调消费掉。
+            flushSave(canvasView.drawing)
             scheduleShapeSnap(in: canvasView)
             // 抬笔了，把书写期间被拦下的撤销/换页/改色补上
             applyPendingProgrammatic()

@@ -66,9 +66,9 @@ struct NotePageView: View {
 
     private var pageSize: CGSize { note.pageSize }
 
-    /// 拖动模式（纯导航）：手形按钮激活后，手指和 Pencil 都只拖页面，任何工具都写不进去
+    /// 拖动工具（纯导航）：选中后手指和 Pencil 都只拖页面，任何笔都写不进去
     private var isNavigating: Bool {
-        tools.handMode && onFingerPan != nil
+        tools.isHandTool && onFingerPan != nil
     }
 
     /// 手指是否单指拖动：iPad 上手指永远拖动（不写字），但连续滚动下交给 ScrollView，
@@ -77,13 +77,13 @@ struct NotePageView: View {
         fingerPans && !tools.fingerCanDraw && onFingerPan != nil
     }
 
-    /// 笔是否单指拖动：手形模式下 Pencil 只拖不写
+    /// 笔是否单指拖动：拖动工具下 Pencil 只拖不写
     private var pencilCanPan: Bool {
-        tools.handMode && onFingerPan != nil
+        tools.isHandTool && onFingerPan != nil
     }
 
     private var canvasInteractive: Bool {
-        // 拖动模式下画布必须能收触摸：套索 / 文字 / 激光笔会把画布整个关掉，
+        // 拖动工具下画布必须能收触摸：套索 / 文字 / 激光笔会把画布整个关掉，
         // 拖动手势挂在画布上，画布不响应就变成「既写不了也拖不动」
         if isNavigating { return true }
         switch tools.activeTool {
@@ -133,6 +133,11 @@ struct NotePageView: View {
                               pencilPans: pencilCanPan,
                               onFingerPan: onFingerPan,
                               onFingerPanEnd: onFingerPanEnd)
+                    // 翻页时必须换一块新画布：复用同一块画布时，SwiftUI 有时不会把新的
+                    // pageID 传到 updateUIView，画布就一直停在上一页的内容上
+                    //（表现为「翻页后还是老样子」或「翻回有字的页却是空白」）。
+                    // 单页模式同时只显示一页，换页重建的代价可以接受。
+                    .id(pageID)
                     .frame(width: pageSize.width, height: pageSize.height)
             }
 

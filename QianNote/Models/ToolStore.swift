@@ -7,6 +7,7 @@ import UIKit
 enum ToolKind: String, CaseIterable, Identifiable {
     case pen
     case dashed
+
     case pencil
     case fountainPen
     case monoline
@@ -17,8 +18,15 @@ enum ToolKind: String, CaseIterable, Identifiable {
     case eraser
     case lasso
     case text
+    /// 拖动工具：选中它时 Pencil 与手指都只拖页面 / 翻页，不落墨。
+    /// 它就是工具箱里的一件工具，和任何一支笔天然互斥，没有额外的开关。
+    case hand
 
     var id: String { rawValue }
+
+    /// 工具栏里列出的一支支笔。拖动工具在界面上单独渲染（它在分隔线之上），
+    /// 所以不能混进这一列，否则会出现两个「手」。
+    static var drawingTools: [ToolKind] { allCases.filter { $0 != .hand } }
 
     var title: String {
         switch self {
@@ -34,6 +42,7 @@ enum ToolKind: String, CaseIterable, Identifiable {
         case .eraser: return "橡皮"
         case .lasso: return "套索"
         case .text: return "文字"
+        case .hand: return "拖动"
         }
     }
 
@@ -51,6 +60,7 @@ enum ToolKind: String, CaseIterable, Identifiable {
         case .eraser: return "eraser"
         case .lasso: return "lasso"
         case .text: return "textformat"
+        case .hand: return "hand.point.up.left"
         }
     }
 
@@ -160,8 +170,12 @@ final class ToolStore: ObservableObject {
     @Published var activeTool: ToolKind = .pen {
         didSet {
             guard activeTool != oldValue else { return }
-            // 记住用户最后一次选的工具，下次进入继续沿用
-            defaults.set(activeTool.rawValue, forKey: "tool.activeTool")
+            // 记住用户最后选的那支笔，下次进入继续沿用。
+            // 拖动工具不写盘：它是「看一眼页面」的临时状态，不是偏好。
+            // 否则下次进笔记还停在拖动上，笔怎么画都不出墨，很容易被当成书写坏了。
+            if activeTool != .hand {
+                defaults.set(activeTool.rawValue, forKey: "tool.activeTool")
+            }
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
         }
     }
@@ -174,17 +188,13 @@ final class ToolStore: ObservableObject {
     }
 
     /// 手指是否直接书写。默认关闭 = 手拖模式：手指拖页面 / 翻页，Pencil 照常写字
-    /// （iPad 上手指永远只拖动；iPhone 没有 Pencil，才允许手指书写）
+    /// （iPhone 没有 Pencil，首次进入默认打开；iPad 默认关闭，可在菜单里切换）
     @Published var fingerDrawing: Bool = false {
         didSet { defaults.set(fingerDrawing, forKey: "tool.fingerDrawing") }
     }
 
-    /// 手形 / 拖动模式：点工具栏右侧的「手指」按钮进入。
-    /// 进入后 Apple Pencil 也不再写字、只拖动画面（手指本来就一直是拖动）。
-    /// 再点任意一支笔即回到书写。与 Notability 的「手形」工具同义。
-    @Published var handMode: Bool = false {
-        didSet { defaults.set(handMode, forKey: "tool.handMode") }
-    }
+    /// 是否为拖动工具。选中它时 Pencil 与手指都只拖页面，任何笔迹都写不进去。
+    var isHandTool: Bool { activeTool == .hand }
 
     /// 橡皮模式：整笔擦（vector）/ 像素擦（bitmap）
     @Published var eraserMode: EraserMode = .stroke {
@@ -214,7 +224,7 @@ final class ToolStore: ObservableObject {
         var loadedColors: [ToolKind: Color] = [:]
         var loadedWidths: [ToolKind: CGFloat] = [:]
 
-        for tool in ToolKind.allCases {
+        for tool in ToolKind.drawingTools {
             if let hex = defaults.string(forKey: "tool.color.\(tool.rawValue)"),
                let color = Color(hex: hex) {
                 loadedColors[tool] = color
@@ -259,16 +269,16 @@ final class ToolStore: ObservableObject {
             shapeRecognition = defaults.bool(forKey: "tool.shapeRecognition")
         }
 
-        // 恢复用户上次选中的工具。激光笔 / 套索 / 文字等非常驻工具也一并记住，
+        // 恢复用户上次选中的笔。套索 / 文字 / 激光笔等非常驻工具也一并记住，
         // 下次进入直接回到上次的手势，而不是每次都退回钢笔。
+        // 拖动工具不持久化，存过也当没存（避免升级后卡在「写不了字」）。
         if let raw = defaults.string(forKey: "tool.activeTool"),
-           let tool = ToolKind(rawValue: raw) {
+           let tool = ToolKind(rawValue: raw), tool != .hand {
             activeTool = tool
         }
 
-        if defaults.object(forKey: "tool.handMode") != nil {
-            handMode = defaults.bool(forKey: "tool.handMode")
-        }
+        // 旧版本的 handMode 布尔已经并入工具列表，顺手清掉残留的键。
+        defaults.removeObject(forKey: "tool.handMode")
     }
 
     // MARK: 查询
@@ -284,11 +294,12 @@ final class ToolStore: ObservableObject {
     var activeColor: Color { color(for: activeTool) }
     var activeWidth: CGFloat { width(for: activeTool) }
 
-    /// 手指能否书写：iPad 上永远不能（手指只用来拖动页面），
-    /// iPhone 没有 Pencil 时才允许手指书写。
-    var fingerCanDraw: Bool {
-        UIDevice.current.userInterfaceIdiom == .phone && fingerDrawing
-    }
+    /// 手指能否书写：跟随用户开关。
+    ///
+    /// iPad 默认关闭（手指留给滚动，这也是绝大多数人的习惯），但**必须允许用户打开**：
+    /// 没有 Apple Pencil 时（含模拟器）如果连开关都没有，一笔都写不出来，
+    /// 而且没有任何提示能告诉用户「为什么写不上」。
+    var fingerCanDraw: Bool { fingerDrawing }
 
     // MARK: 修改
 
@@ -358,6 +369,6 @@ final class ToolStore: ObservableObject {
 
     /// 用于判断是否需要把工具同步给 PKCanvasView（避免每次刷新都重设工具）
     var toolKey: String {
-        "\(activeTool.rawValue)|\(activeColor.hexString)|\(activeWidth)|\(fingerCanDraw)|\(handMode)|\(eraserMode.rawValue)"
+        "\(activeTool.rawValue)|\(activeColor.hexString)|\(activeWidth)|\(fingerCanDraw)|\(eraserMode.rawValue)"
     }
 }
