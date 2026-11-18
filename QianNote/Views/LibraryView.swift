@@ -63,34 +63,26 @@ struct LibraryView: View {
         NavigationStack(path: $path) {
             ZStack {
                 Theme.libraryBackground.ignoresSafeArea()
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 18) {
-                        folderChips
-
-                        if filteredNotes.isEmpty {
-                            EmptyLibraryView(onCreate: createNote, onImport: { showImporter = true })
-                        } else {
-                            LazyVGrid(columns: columns,
-                                      alignment: .leading,
-                                      spacing: compact ? 18 : 26) {
-                                ForEach(filteredNotes) { note in
-                                    NavigationLink(value: note.id) {
-                                        NoteCardView(note: note,
-                                                     previewHeight: compact ? 168 : 210)
-                                    }
-                                    .buttonStyle(.plain)
-                                    .contextMenu { contextMenu(for: note) }
-                                }
-                            }
-                        }
-                    }
-                    .padding(.horizontal, compact ? 16 : 24)
-                    .padding(.top, 8)
-                    .padding(.bottom, 40)
+                VStack(spacing: 0) {
+                    folderChips
+                        .padding(.horizontal, compact ? 16 : 24)
+                        .padding(.top, 8)
+                        .padding(.bottom, 12)
+                    libraryScroll
+                }
+                // 菜单里的筛选 chip 选中态读起来不可靠（动画期间快照会给出过期 frame），
+                // 测试直接读这个探针：值就是列表当前真正的筛选状态
+                if InkProbe.enabled {
+                    Text("favorites=\(favoritesOnly ? 1 : 0)")
+                        .font(.system(size: 1)).frame(width: 1, height: 1)
+                        .opacity(0.01).allowsHitTesting(false)
+                        .accessibilityIdentifier("libraryProbe")
                 }
             }
             .navigationTitle("笔记")
-            .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .always), prompt: "搜索标题或文字")
+            .searchable(text: $searchText,
+                        placement: .navigationBarDrawer(displayMode: .always),
+                        prompt: "搜索标题或文字")
             .toolbar {
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     Button {
@@ -157,6 +149,32 @@ struct LibraryView: View {
     }
 
     // MARK: - 工具栏菜单
+
+    private var libraryScroll: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                if filteredNotes.isEmpty {
+                    EmptyLibraryView(onCreate: createNote, onImport: { showImporter = true })
+                } else {
+                    LazyVGrid(columns: columns,
+                              alignment: .leading,
+                              spacing: compact ? 18 : 26) {
+                        ForEach(filteredNotes) { note in
+                            NavigationLink(value: note.id) {
+                                NoteCardView(note: note,
+                                             previewHeight: compact ? 168 : 210)
+                            }
+                            .buttonStyle(.plain)
+                            .contextMenu { contextMenu(for: note) }
+                        }
+                    }
+                }
+            }
+            .padding(.horizontal, compact ? 16 : 24)
+            .padding(.top, 8)
+            .padding(.bottom, 40)
+        }
+    }
 
     private var sortMenu: some View {
         Menu {
@@ -255,7 +273,6 @@ struct LibraryView: View {
                     }
                 }
             }
-            .padding(.vertical, 2)
         }
     }
 
@@ -276,7 +293,10 @@ struct LibraryView: View {
         }
         .buttonStyle(.plain)
         // 筛选 chip 与长按菜单里的操作可能同名（「收藏」两边都有），
-        // 给 chip 一个稳定标识，自动化测试才不会点错地方
+        // 给 chip 一个稳定标识，自动化测试才不会点错地方；
+        // 同时暴露选中态，测试才能确认筛选真的切过去了
+        .accessibilityAddTraits(active ? .isSelected : [])
+        .accessibilityValue(active ? "1" : "0")
         .accessibilityIdentifier("filter-\(title)")
     }
 
