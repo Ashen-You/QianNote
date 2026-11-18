@@ -69,6 +69,7 @@ final class ContinuousCanvasChaosTests: XCTestCase {
                 toolKey: "pen",
                 isDrawingEnabled: true,
                 fingerDrawing: false,
+                passesFingersThrough: false,
                 shapeRecognition: false,
                 isSourceEligibleForSnap: false,
                 zoom: Binding(get: { zoom.value }, set: { zoom.value = $0 }),
@@ -328,5 +329,23 @@ final class ContinuousCanvasChaosTests: XCTestCase {
         let merged = InkComposer.merge(pageDrawings: pageDrawings, pageHeight: pageSize.height)
         XCTAssertEqual(merged.strokes.count, 1)
         XCTAssertEqual(merged.strokes.first?.path.first?.location.y ?? 0, start.y, accuracy: 0.5)
+    }
+
+    // MARK: - 触摸归属
+
+    /// 触摸归属只能按工具决定，不能靠 `UIEvent.allTouches` 去猜类型：
+    /// 真机上 Pencil 事件到达 hitTest 时不总带触摸信息，猜错就会把 Pencil 当手指放走，
+    /// 表现是「选了笔既写不出也拖不动」。
+    func testHitTestFollowsToolMode() {
+        let h = makeHarness()
+        let canvas = h.canvas
+        let point = CGPoint(x: 100, y: 100)
+
+        XCTAssertNotNil(canvas.hitTest(point, with: nil),
+                        "书写工具下画布必须接收触摸，否则 Pencil 写不出字")
+
+        canvas.passesFingersThrough = true
+        XCTAssertNil(canvas.hitTest(point, with: nil),
+                     "拖动 / 文字工具下触摸应整体穿透给背景层")
     }
 }

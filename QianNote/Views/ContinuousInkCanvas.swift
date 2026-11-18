@@ -36,8 +36,13 @@ struct ContinuousInkCanvas<Background: View>: UIViewRepresentable {
     let toolKey: String
     /// 是否允许书写（拖动模式 / 只读时关掉）
     let isDrawingEnabled: Bool
-    /// 手指能否书写（关闭时 canvas 让手指穿透，交给 scroll 滚动）
+    /// 手指能否书写（true 时 drawingPolicy 为 .anyInput，单指也能落墨）
     let fingerDrawing: Bool
+    /// 触摸是否整体穿透给下层（拖动 / 文字工具需要点背景）。
+    /// 书写工具下必须由画布接手所有触摸，不能靠事件里的触摸类型去猜——
+    /// 真机上 Pencil 事件到达 hitTest 时并不总是带着触摸信息，
+    /// 一旦猜错，Pencil 就被当成手指放走，表现为「选了笔却既写不出也拖不动」。
+    let passesFingersThrough: Bool
     let shapeRecognition: Bool
     let isSourceEligibleForSnap: Bool
 
@@ -123,18 +128,16 @@ struct ContinuousInkCanvas<Background: View>: UIViewRepresentable {
         }
     }
 
-    // MARK: - 画布（手指穿透）
+    // MARK: - 画布（触摸归属）
 
-    /// 只对 Apple Pencil 响应命中测试，手指事件穿透给下面的 scroll（滚动）
-    /// 和背景层（点文字框 / 拖图片）。手指书写模式下则全部接收。
+    /// 书写工具下接收所有触摸：Pencil 一定能落笔；手指被 drawingPolicy 挡住不落墨，
+    /// 滚动由外层 scroll 的 pan 手势负责（祖先手势不依赖命中测试）。
+    /// 只有拖动 / 文字工具才整体穿透，让手指点背景、拖页面。
     final class InkCanvasView: PKCanvasView {
-        var fingerDraws = false
+        var passesFingersThrough = false
 
         override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
-            if !fingerDraws, let event {
-                let hasPencil = event.allTouches?.contains { $0.type == .pencil } ?? false
-                if !hasPencil { return nil }
-            }
+            if passesFingersThrough { return nil }
             return super.hitTest(point, with: event)
         }
     }
@@ -180,7 +183,7 @@ struct ContinuousInkCanvas<Background: View>: UIViewRepresentable {
             view.canvas.delegate = self
             view.canvas.drawingPolicy = parent.fingerDrawing ? .anyInput : .pencilOnly
             view.canvas.tool = parent.tool
-            view.canvas.fingerDraws = parent.fingerDrawing
+            view.canvas.passesFingersThrough = parent.passesFingersThrough
             view.canvas.drawing = parent.globalDrawing
             view.canvas.drawingGestureRecognizer.isEnabled = parent.isDrawingEnabled
             applyScrollTouchRules(in: view)
@@ -231,10 +234,11 @@ struct ContinuousInkCanvas<Background: View>: UIViewRepresentable {
             if view.canvas.drawingGestureRecognizer.isEnabled != canDraw {
                 view.canvas.drawingGestureRecognizer.isEnabled = canDraw
             }
-            if view.canvas.fingerDraws != parent.fingerDrawing {
-                view.canvas.fingerDraws = parent.fingerDrawing
-                view.canvas.drawingPolicy = parent.fingerDrawing ? .anyInput : .pencilOnly
+            let policy: PKCanvasViewDrawingPolicy = parent.fingerDrawing ? .anyInput : .pencilOnly
+            if view.canvas.drawingPolicy != policy {
+                view.canvas.drawingPolicy = policy
             }
+            view.canvas.passesFingersThrough = parent.passesFingersThrough
             // 工具切换会同时改变「能否书写」与手指/笔的滚动归属
             applyScrollTouchRules(in: view)
 

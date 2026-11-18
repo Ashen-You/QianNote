@@ -458,6 +458,9 @@ struct EditorView: View {
             toolKey: tools.toolKey,
             isDrawingEnabled: !tools.isHandTool,
             fingerDrawing: tools.fingerCanDraw,
+            // 拖动 / 文字工具要把触摸整体交给背景；选笔时画布自己接手，
+            // 不能再靠触摸类型猜 Pencil（猜错就是「选了笔写不出也拖不动」）
+            passesFingersThrough: tools.activeTool == .hand || tools.activeTool == .text,
             shapeRecognition: tools.shapeRecognition,
             isSourceEligibleForSnap: tools.activeTool.supportsShapeSnap && !tools.activeTool.isDashed,
             zoom: $zoom,
