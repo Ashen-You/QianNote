@@ -289,6 +289,73 @@ final class ChaosRound3Tests: NoteUITestCase {
                                     + "（退出前=\(total) 现在=\(kept.length)）")
     }
 
+    // MARK: - 6. 滚到页缝，一笔跨两页，落盘后仍是一条
+
+    func test06_pageSeamStroke_persists() {
+        // 手指书写先关：pencilOnly 下单指才能把页缝滚到屏幕中部；
+        // 到位后再从菜单打开「手指书写」，用手指代替 Pencil 落墨。
+        let app = launch(fingerDraws: false, extra: ["-tool.shapeRecognition", "NO"])
+        openNewNote(app)
+        insertPages(1, in: app)          // 2 页，自动进入连续滚动
+        usleep(1_200_000)
+
+        // 翻到第 2 页顶部，再向下拖半屏：页缝约落在屏幕 45% 高处
+        goToLastPage(app)
+        stroke(app, from: CGVector(dx: 0.60, dy: 0.20),
+               to: CGVector(dx: 0.60, dy: 0.65), hold: 0.05)
+        usleep(1_200_000)
+        XCTAssertEqual(pageCount(app), 2, "滚动后总页数变了")
+        XCTAssertEqual(inkState(app).length, 0, "pencilOnly 下滚动手指却写上了字")
+
+        // 菜单里打开手指书写
+        let more = app.buttons["更多"]
+        XCTAssertTrue(more.waitForExistence(timeout: 8), "找不到「更多」菜单")
+        more.tap()
+        let fingerSwitch = app.switches["手指书写"].firstMatch
+        if fingerSwitch.waitForExistence(timeout: 3) {
+            fingerSwitch.tap()
+        } else {
+            let row = app.descendants(matching: .any)["手指书写"].firstMatch
+            XCTAssertTrue(row.waitForExistence(timeout: 3), "菜单里找不到「手指书写」")
+            row.tap()
+        }
+        usleep(500_000)
+        if app.staticTexts["手指书写"].exists || app.switches["手指书写"].exists {
+            // 菜单还开着：点顶栏空白收起，别点到画布留下墨点
+            app.coordinate(withNormalizedOffset: CGVector(dx: 0.55, dy: 0.05)).tap()
+            usleep(400_000)
+        }
+
+        // 一条竖笔横跨页缝：缝上下两侧都必须看到这一笔
+        let upper = CGRect(x: 0.30, y: 0.28, width: 0.40, height: 0.14)
+        let lower = CGRect(x: 0.30, y: 0.53, width: 0.40, height: 0.14)
+        let upperBefore = inkPixels(region: upper)
+        let lowerBefore = inkPixels(region: lower)
+        let gained = drawStroke(app, from: CGVector(dx: 0.50, dy: 0.33),
+                                to: CGVector(dx: 0.50, dy: 0.63), hold: 0.1)
+        XCTAssertGreaterThan(gained, 20, "跨页缝的笔画没有落墨")
+        usleep(600_000)
+        let upperAfter = inkPixels(region: upper)
+        let lowerAfter = inkPixels(region: lower)
+        XCTAssertGreaterThan(upperAfter - upperBefore, 20, "页缝上方没看到这一笔")
+        XCTAssertGreaterThan(lowerAfter - lowerBefore, 20, "页缝下方没看到这一笔")
+
+        // 整笔按起笔页归页落盘，退出重进后长度不能丢
+        let total = inkState(app).length
+        XCTAssertGreaterThan(total, 20, "跨页笔迹的探针长度异常")
+        app.buttons["返回笔记列表"].tap()
+        usleep(900_000)
+        let card = noteCard(app)
+        XCTAssertTrue(card.waitForExistence(timeout: 15), "回列表找不到笔记")
+        card.tap()
+        XCTAssertTrue(app.buttons["返回笔记列表"].waitForExistence(timeout: 15), "没能重新进入笔记")
+        usleep(2_000_000)
+        setContinuousScroll(true, in: app)
+        let kept = waitForInk(app, timeout: 10) { $0.length >= total - 20 }
+        XCTAssertGreaterThanOrEqual(kept.length, total - 20,
+                                    "跨页笔迹重进之后丢了（\(total) → \(kept.length)）")
+    }
+
     // MARK: - 小工具
 
     private func currentPageNumber(_ app: XCUIApplication) -> Int? {

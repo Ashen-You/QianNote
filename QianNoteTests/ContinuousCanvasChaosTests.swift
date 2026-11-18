@@ -38,6 +38,8 @@ final class ContinuousCanvasChaosTests: XCTestCase {
         let page: Box<Int>
         let ink: Box<PKDrawing>
         let pageCount: Box<Int>
+        /// 外部替换墨迹的版本号（模拟 loadSharedInk / 换页数）
+        let revision: Box<Int>
         /// 重建 Canvas 结构体并交给 coordinator（等价于 SwiftUI 再算一次 body）
         let rebuild: () -> Void
 
@@ -59,12 +61,14 @@ final class ContinuousCanvasChaosTests: XCTestCase {
         let page = Box<Int>(0)
         let ink = Box<PKDrawing>(PKDrawing())
         let count = Box<Int>(initialPageCount ?? pageCount)
+        let revision = Box<Int>(0)
 
         let build: () -> Canvas = { [pageSize] in
             Canvas(
                 pageSize: pageSize,
                 pageCount: count.value,
                 globalDrawing: ink.value,
+                drawingRevision: revision.value,
                 tool: PKInkingTool(.pen, color: .black, width: 4),
                 toolKey: "pen",
                 isDrawingEnabled: true,
@@ -75,7 +79,8 @@ final class ContinuousCanvasChaosTests: XCTestCase {
                 zoom: Binding(get: { zoom.value }, set: { zoom.value = $0 }),
                 currentPage: Binding(get: { page.value }, set: { page.value = $0 }),
                 onDrawingChange: { ink.value = $0 },
-                background: EmptyView()
+                background: EmptyView(),
+                backgroundKey: 0
             )
         }
 
@@ -86,6 +91,7 @@ final class ContinuousCanvasChaosTests: XCTestCase {
         container.layoutIfNeeded()
         return Harness(container: container, coordinator: coordinator,
                        zoom: zoom, page: page, ink: ink, pageCount: count,
+                       revision: revision,
                        rebuild: { coordinator.parent = build() })
     }
 
@@ -119,8 +125,34 @@ final class ContinuousCanvasChaosTests: XCTestCase {
                        "\(label): contentView 屏幕宽度 != 逻辑宽度 × 缩放", file: file, line: line)
         XCTAssertEqual(h.container.contentView.frame.height, logical.height * scroll.zoomScale, accuracy: 2,
                        "\(label): contentView 屏幕高度 != 逻辑高度 × 缩放", file: file, line: line)
-        XCTAssertEqual(h.canvas.frame, CGRect(origin: .zero, size: logical),
-                       "\(label): 画布 frame 不等于逻辑尺寸（墨迹会被拉伸/压缩）", file: file, line: line)
+
+        // 1b. 画布是「可视区域附近的滑动窗口」而不是整本尺寸：
+        //     Metal 帧缓冲按 bounds 分配，整本高度 @2x 会超过 16384px 纹理上限，
+        //     PencilKit 分配失败后实时笔迹层直接消失。窗口必须盖住可视区域，
+        //     且 frame.origin.y 必须与 contentOffset.y 完全一致，否则墨迹相对背景错位。
+        let zoomScale = max(scroll.zoomScale, 0.0001)
+        let visibleHeight = min(h.container.bounds.height / zoomScale, logical.height)
+        let visibleTop = min(max(scroll.contentOffset.y / zoomScale, 0),
+                             max(logical.height - visibleHeight, 0))
+        XCTAssertEqual(h.canvas.contentSize.width, logical.width, accuracy: 0.5,
+                       "\(label): 画布 contentSize 必须是整本宽度（全局坐标系）", file: file, line: line)
+        XCTAssertEqual(h.canvas.contentSize.height, logical.height, accuracy: 0.5,
+                       "\(label): 画布 contentSize 必须是整本高度（全局坐标系）", file: file, line: line)
+        XCTAssertEqual(h.canvas.frame.width, logical.width, accuracy: 0.5,
+                       "\(label): 画布宽度必须是页宽", file: file, line: line)
+        XCTAssertLessThanOrEqual(h.canvas.frame.height, 3072.5,
+                       "\(label): 画布窗口超过 Metal 安全高度（@2x 6144px）", file: file, line: line)
+        XCTAssertGreaterThanOrEqual(h.canvas.frame.height, min(pageSize.height, logical.height) - 0.5,
+                       "\(label): 画布窗口比一页还矮", file: file, line: line)
+        XCTAssertLessThanOrEqual(h.canvas.frame.maxY, logical.height + 0.5,
+                       "\(label): 画布窗口超出整本范围", file: file, line: line)
+        XCTAssertEqual(h.canvas.frame.minY, h.canvas.contentOffset.y, accuracy: 0.01,
+                       "\(label): 画布 frame 原点与 contentOffset 不一致（墨迹会相对背景错位）",
+                       file: file, line: line)
+        XCTAssertLessThanOrEqual(h.canvas.frame.minY, visibleTop + 0.5,
+                       "\(label): 画布窗口没盖住可视区域上沿（画不出来/看不到墨）", file: file, line: line)
+        XCTAssertGreaterThanOrEqual(h.canvas.frame.maxY, visibleTop + visibleHeight - 0.5,
+                       "\(label): 画布窗口没盖住可视区域下沿（画不出来/看不到墨）", file: file, line: line)
 
         // 2. 画布永远 1:1
         XCTAssertEqual(h.canvas.zoomScale, 1, accuracy: 0.0001,
@@ -347,5 +379,47 @@ final class ContinuousCanvasChaosTests: XCTestCase {
         canvas.passesFingersThrough = true
         XCTAssertNil(canvas.hitTest(point, with: nil),
                      "拖动 / 文字工具下触摸应整体穿透给背景层")
+    }
+
+    // MARK: - 墨迹回写
+
+    /// 外部替换画布墨迹只能由版本号驱动：
+    /// 普通 SwiftUI 刷新（滚动 / 换页 / 工具切换）不许覆盖正在编辑的画布；
+    /// 只有加载 / 换页数这类主动替换（版本自增）才写回。
+    /// 这条同时锁住「每次刷新都序列化整本 drawing 做字节比较」的性能回归。
+    func testDrawingRevision_drivesCanvasWriteback() {
+        let h = makeHarness(zoomLevel: 1, initialPageCount: 2)
+        let local = makeLineDrawing(from: CGPoint(x: 100, y: 100),
+                                    to: CGPoint(x: 300, y: 300))
+        h.canvas.drawing = local
+
+        // 版本不变：SwiftUI 传来的 globalDrawing 是旧值，也不许盖掉画布
+        h.ink.value = makeLineDrawing(from: CGPoint(x: 500, y: 500),
+                                      to: CGPoint(x: 600, y: 600))
+        h.rebuild()
+        h.coordinator.syncFromSwiftUI()
+        XCTAssertEqual(h.canvas.drawing.bounds.origin.x, local.bounds.origin.x, accuracy: 0.5,
+                       "没有版本变化时刷新把画布墨迹覆盖了")
+        XCTAssertEqual(h.canvas.drawing.bounds.width, local.bounds.width, accuracy: 0.5)
+
+        // 版本自增 = 外部主动替换（loadSharedInk / 换页数）：这次必须写回
+        h.revision.value += 1
+        h.rebuild()
+        h.coordinator.syncFromSwiftUI()
+        XCTAssertEqual(h.canvas.drawing.bounds.origin.x, h.ink.value.bounds.origin.x, accuracy: 0.5,
+                       "版本变化之后画布没有拿到新的全局墨迹")
+        XCTAssertEqual(h.canvas.drawing.bounds.width, h.ink.value.bounds.width, accuracy: 0.5)
+    }
+
+    private func makeLineDrawing(from start: CGPoint, to end: CGPoint) -> PKDrawing {
+        let points = [start, end].enumerated().map { index, location in
+            PKStrokePoint(location: location,
+                          timeOffset: Double(index) * 0.01,
+                          size: CGSize(width: 4, height: 4),
+                          opacity: 1, force: 1, azimuth: 0, altitude: .pi / 2)
+        }
+        let stroke = PKStroke(ink: PKInk(.pen, color: .black),
+                              path: PKStrokePath(controlPoints: points, creationDate: Date()))
+        return PKDrawing(strokes: [stroke])
     }
 }
