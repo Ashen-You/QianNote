@@ -13,6 +13,8 @@
 		C0FFEE0000000000000000C5 /* LibraryFeatureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0FFEE0000000000000000C6 /* LibraryFeatureTests.swift */; };
 		C0FFEE0000000000000000D1 /* ChaosRound1Tests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0FFEE0000000000000000D2 /* ChaosRound1Tests.swift */; };
 		C0FFEE0000000000000000D3 /* ChaosRound2Tests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0FFEE0000000000000000D4 /* ChaosRound2Tests.swift */; };
+		C0FFEE0000000000000000E1 /* ChaosRound3Tests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0FFEE0000000000000000E2 /* ChaosRound3Tests.swift */; };
+		C0FFEE0000000000000000E3 /* ChaosRound4Tests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0FFEE0000000000000000E4 /* ChaosRound4Tests.swift */; };
 		00470271669A49F4A814F7EC /* QianNoteApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 540CD1790D8D40AB82A749DE /* QianNoteApp.swift */; };
 		07EEE30939E84E5C81A65195 /* ToolRailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 169E824DA10645C4BDD0BF36 /* ToolRailView.swift */; };
 		0F0A1DD4F0274FBFAC812760 /* NoteCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3190D2D448A543A28B2A0CFD /* NoteCardView.swift */; };
@@ -105,6 +107,8 @@
 		C0FFEE0000000000000000C6 /* LibraryFeatureTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = LibraryFeatureTests.swift; path = LibraryFeatureTests.swift; sourceTree = "<group>"; };
 		C0FFEE0000000000000000D2 /* ChaosRound1Tests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ChaosRound1Tests.swift; path = ChaosRound1Tests.swift; sourceTree = "<group>"; };
 		C0FFEE0000000000000000D4 /* ChaosRound2Tests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ChaosRound2Tests.swift; path = ChaosRound2Tests.swift; sourceTree = "<group>"; };
+		C0FFEE0000000000000000E2 /* ChaosRound3Tests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ChaosRound3Tests.swift; path = ChaosRound3Tests.swift; sourceTree = "<group>"; };
+		C0FFEE0000000000000000E4 /* ChaosRound4Tests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ChaosRound4Tests.swift; path = ChaosRound4Tests.swift; sourceTree = "<group>"; };
 		C0FFEE0000000000000000B3 /* QianNoteUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = QianNoteUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -258,6 +262,8 @@
 				C0FFEE0000000000000000C6 /* LibraryFeatureTests.swift */,
 				C0FFEE0000000000000000D2 /* ChaosRound1Tests.swift */,
 				C0FFEE0000000000000000D4 /* ChaosRound2Tests.swift */,
+				C0FFEE0000000000000000E2 /* ChaosRound3Tests.swift */,
+				C0FFEE0000000000000000E4 /* ChaosRound4Tests.swift */,
 			);
 			name = QianNoteUITests;
 			path = QianNoteUITests;
@@ -438,6 +444,8 @@
 				C0FFEE0000000000000000C5 /* LibraryFeatureTests.swift in Sources */,
 				C0FFEE0000000000000000D1 /* ChaosRound1Tests.swift in Sources */,
 				C0FFEE0000000000000000D3 /* ChaosRound2Tests.swift in Sources */,
+				C0FFEE0000000000000000E1 /* ChaosRound3Tests.swift in Sources */,
+				C0FFEE0000000000000000E3 /* ChaosRound4Tests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
