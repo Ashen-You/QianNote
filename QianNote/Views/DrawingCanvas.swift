@@ -107,6 +107,7 @@ final class CanvasController: NSObject, ObservableObject {
 
     private func restore(_ drawing: PKDrawing) {
         currentDrawing = drawing
+        InkProbe.shared.update(drawing)
         onDrawingRestored?(drawing)
         updateFlags()
     }
@@ -559,6 +560,9 @@ struct DrawingCanvas: UIViewRepresentable {
 
         /// 落盘到「这份墨迹真正属于的那一页」，而不是当前正在显示的页
         private func saveToOwner(_ drawing: PKDrawing) {
+            // 所有墨迹变更都会经过这里（书写落盘 / 程序化改图 / 橡皮），
+            // 顺带把状态喂给 UI 测试探针，避免测试去截屏数像素
+            InkProbe.shared.update(drawing)
             (ownerSave ?? parent.onChange)(drawing)
         }
 

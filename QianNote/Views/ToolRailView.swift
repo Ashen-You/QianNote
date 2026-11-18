@@ -122,6 +122,8 @@ struct ToolRailView: View {
         )
         .accessibilityLabel(tool.title)
         .accessibilityHint("长按调整颜色与粗细")
+        // 笔有没有被选中必须能被读出来：VoiceOver 要报，自动化也要靠它判断互斥
+        .accessibilityValue(isActive ? "已选中" : "未选中")
     }
 }
 
@@ -238,6 +240,8 @@ struct CompactToolBar: View {
         )
         .accessibilityLabel(tool.title)
         .accessibilityHint("长按调整颜色与粗细")
+        // 笔有没有被选中必须能被读出来：VoiceOver 要报，自动化也要靠它判断互斥
+        .accessibilityValue(isActive ? "已选中" : "未选中")
     }
 
     private var pageButton: some View {

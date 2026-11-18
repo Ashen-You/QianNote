@@ -749,65 +749,22 @@ final class NoteStore: ObservableObject {
         }
     }
 
-    // MARK: - 手写 OCR 索引
+    // MARK: - 搜索匹配
 
-    /// 索引是否正在跑（列表底部的进度提示用）
-    @Published private(set) var isIndexingHandwriting = false
-
-    /// 补全手写索引：只处理「没识别过」或「墨迹变了」的页。
+    /// 笔记是否命中搜索：标题，或页面上文字框里的字。
     ///
-    /// 用笔画数当版本号：手写只增不减时笔画数一变就说明内容变了，需要重识别。
-    /// 串行执行 —— 同时开多个 Vision 请求会把 CPU 吃满，反而更慢。
-    func indexHandwritingIfNeeded(maxPages: Int = 40) async {
-        guard !isIndexingHandwriting else { return }
-
-        var jobs: [(noteID: UUID, pageID: UUID, drawing: PKDrawing, pageSize: CGSize)] = []
-        for note in notes {
-            for page in note.pages {
-                if jobs.count >= maxPages { break }
-
-                let drawing = drawing(noteID: note.id, pageID: page.id)
-                let strokeCount = drawing.strokes.count
-                // 空页没有可识别内容：直接跳过，不必写入标记
-                if strokeCount == 0 { continue }
-                // 已经索引过且墨迹没变
-                if page.ocrText != nil, page.ocrBaseline == strokeCount { continue }
-
-                jobs.append((note.id, page.id, drawing, note.pageSize))
-            }
-            if jobs.count >= maxPages { break }
-        }
-
-        guard !jobs.isEmpty else { return }
-        isIndexingHandwriting = true
-        defer { isIndexingHandwriting = false }
-
-        for job in jobs {
-            if Task.isCancelled { return }
-            let text = await HandwritingOCR.recognize(drawing: job.drawing, pageSize: job.pageSize)
-            let strokeCount = job.drawing.strokes.count
-            update(job.noteID) { note in
-                guard let index = note.pages.firstIndex(where: { $0.id == job.pageID }) else { return }
-                note.pages[index].ocrText = text
-                note.pages[index].ocrBaseline = strokeCount
-            }
-            // 每页之间让一下主线程，避免边索引边写字时掉帧
-            await Task.yield()
-        }
-        // 一轮结束立刻落盘，别等防抖
-        saveNow()
-    }
-
-    /// 笔记是否命中搜索：标题命中，或任一页的手写 OCR 命中。
+    /// 手写 OCR 索引已经移除：Vision 对中文手写的识别率有限，索引一次要渲染 + 识别，
+    /// 换来的只是"偶尔能搜到手写"，性价比不成立。搜标题和文字框是确定性的。
     func matches(_ note: Note, query: String) -> Bool {
         if note.title.localizedCaseInsensitiveContains(query) { return true }
-        guard let normalized = HandwritingOCR.normalize(query), !normalized.isEmpty else { return false }
-        if note.pages.contains(where: { ($0.ocrText ?? "").contains(normalized) }) { return true }
-        // 文字框内容也算"笔记里写的字"
+
+        let needle = query
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        guard !needle.isEmpty else { return false }
+
         return note.pages.contains { page in
-            page.textBoxes.contains {
-                HandwritingOCR.normalize($0.text)?.contains(normalized) ?? false
-            }
+            page.textBoxes.contains { $0.text.lowercased().contains(needle) }
         }
     }
 

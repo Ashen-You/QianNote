@@ -39,11 +39,6 @@ struct NotePage: Identifiable, Codable, Hashable {
     var id: UUID = UUID()
     var textBoxes: [TextBox] = []
     var images: [ImageItem] = []
-    /// 这一页手写内容的 OCR 结果（小写、空白已归一），nil 表示还没识别过。
-    /// 存进模型而不是内存缓存，是为了跨启动保留 —— 否则每次冷启动都要把所有页重识别一遍。
-    var ocrText: String? = nil
-    /// OCR 结果对应的墨迹版本。墨迹变了但版本没变时，说明索引过期，要重识别。
-    var ocrBaseline: Int? = nil
 
     init(id: UUID = UUID(), textBoxes: [TextBox] = [], images: [ImageItem] = []) {
         self.id = id
@@ -57,8 +52,6 @@ struct NotePage: Identifiable, Codable, Hashable {
         id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
         textBoxes = try container.decodeIfPresent([TextBox].self, forKey: .textBoxes) ?? []
         images = try container.decodeIfPresent([ImageItem].self, forKey: .images) ?? []
-        ocrText = try container.decodeIfPresent(String.self, forKey: .ocrText)
-        ocrBaseline = try container.decodeIfPresent(Int.self, forKey: .ocrBaseline)
     }
 }
 

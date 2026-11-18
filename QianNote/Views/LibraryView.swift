@@ -90,11 +90,7 @@ struct LibraryView: View {
                 }
             }
             .navigationTitle("笔记")
-            .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .always), prompt: "搜索标题或手写内容")
-            .task {
-                // 后台补手写索引：只算缺失 / 过期的页，算过的不会重来
-                await store.indexHandwritingIfNeeded()
-            }
+            .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .always), prompt: "搜索标题或文字")
             .toolbar {
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     Button {
@@ -226,7 +222,9 @@ struct LibraryView: View {
             Button {
                 showRestorePicker = true
             } label: {
-                Label("从备份恢复…", systemImage: "arrow.down.doc.on.clipboard")
+                // 原本写的 arrow.down.doc.on.clipboard 在系统里不存在，
+                // 菜单项会出现空图标并在日志里刷 "No symbol named"
+                Label("从备份恢复…", systemImage: "square.and.arrow.down.on.square")
             }
         } label: {
             Image(systemName: "plus")
@@ -277,6 +275,9 @@ struct LibraryView: View {
             .foregroundStyle(active ? Color.white : Color.primary.opacity(0.75))
         }
         .buttonStyle(.plain)
+        // 筛选 chip 与长按菜单里的操作可能同名（「收藏」两边都有），
+        // 给 chip 一个稳定标识，自动化测试才不会点错地方
+        .accessibilityIdentifier("filter-\(title)")
     }
 
     // MARK: - 数据
@@ -286,7 +287,7 @@ struct LibraryView: View {
         if favoritesOnly { result = result.filter(\.isFavorite) }
         if let selectedFolder { result = result.filter { $0.folderID == selectedFolder } }
         if !searchText.isEmpty {
-            // 标题 + 手写 OCR + 文字框，三处任意命中即算匹配
+            // 标题 + 文字框，任意一处命中即算匹配
             result = result.filter { store.matches($0, query: searchText) }
         }
         switch sortOption {
@@ -458,18 +459,22 @@ struct LibraryView: View {
         } label: {
             Label("重命名", systemImage: "pencil")
         }
+        .accessibilityIdentifier("menu-rename")
 
         Button {
             store.toggleFavorite(note.id)
         } label: {
             Label(note.isFavorite ? "取消收藏" : "收藏", systemImage: "star")
         }
+        // 文案会随状态变化，标识不变；也避免和顶部「收藏」筛选 chip 撞名
+        .accessibilityIdentifier("menu-favorite")
 
         Button {
             store.duplicate(note.id)
         } label: {
             Label("复制副本", systemImage: "doc.on.doc")
         }
+        .accessibilityIdentifier("menu-duplicate")
 
         Menu {
             Button("未分类") { store.move(note.id, to: nil) }
@@ -487,6 +492,7 @@ struct LibraryView: View {
         } label: {
             Label("删除", systemImage: "trash")
         }
+        .accessibilityIdentifier("menu-delete")
     }
 }
 

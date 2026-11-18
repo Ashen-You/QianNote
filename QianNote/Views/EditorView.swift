@@ -38,6 +38,8 @@ struct EditorView: View {
 
     /// 用户缩放倍率（1 = 适配整页）
     @State private var zoom: CGFloat = 1
+    /// UI 测试探针（仅 -uiTestProbe 启动时有内容）
+    @StateObject private var inkProbe = InkProbe.shared
     /// 缩放后的平移量（点）
     @State private var pan: CGSize = .zero
     /// 纯手拖：1× 时上下拖动累积的位移，用来翻页
@@ -96,6 +98,19 @@ struct EditorView: View {
             bottomBar
                 .opacity(immersive ? 0 : 1)
                 .allowsHitTesting(!immersive)
+        }
+        // UI 测试探针：把画布真实状态（笔画数 / 墨迹包围盒）暴露成一个无障碍元素，
+        // 测试读一次 a11y 就能判断"写没写上"，不必截全屏图数像素。
+        // 只有带 -uiTestProbe 启动时才存在，正式运行时这块视图根本不渲染。
+        .overlay(alignment: .topLeading) {
+            if InkProbe.enabled {
+                Text(inkProbe.text)
+                    .font(.system(size: 1))
+                    .frame(width: 1, height: 1)
+                    .opacity(0.01)
+                    .allowsHitTesting(false)
+                    .accessibilityIdentifier("inkProbe")
+            }
         }
         .overlay {
             if immersive, let note {
@@ -889,6 +904,10 @@ struct EditorView: View {
                     Toggle(isOn: $continuous) {
                         Label("连续滚动", systemImage: "rectangle.stack")
                     }
+                    // 菜单里的 Toggle 会被 SwiftUI 压成 Button，默认的 value 读不出来；
+                    // 显式给出标识与状态，VoiceOver 和自动化都能正确判断开关当前值
+                    .accessibilityIdentifier("toggle-continuous")
+                    .accessibilityValue(continuous ? "1" : "0")
                 }
                 Button {
                     exportPDF()
