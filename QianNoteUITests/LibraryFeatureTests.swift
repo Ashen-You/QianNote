@@ -10,22 +10,12 @@ final class LibraryFeatureTests: NoteUITestCase {
     /// 新建一本笔记、改成指定标题、回到列表
     @discardableResult
     func createNote(titled name: String, in app: XCUIApplication) -> XCUIElement {
+        // openNewNote 已经把笔记改成了用例专属标题，这里换成业务用例要的名字
         openNewNote(app)
-
-        let title = app.buttons["未命名笔记"]
-        if title.waitForExistence(timeout: 8) {
-            title.tap()
-            let field = app.textFields["标题"]
-            if field.waitForExistence(timeout: 6) {
-                field.tap()
-                field.clearAndType(name)
-                app.buttons["保存"].tap()
-                usleep(800_000)
-            }
-        }
+        renameCurrentNote(to: name, in: app)
         app.buttons["返回笔记列表"].tap()
 
-        let card = app.staticTexts[name]
+        let card = app.staticTexts[name].firstMatch
         XCTAssertTrue(card.waitForExistence(timeout: 15), "列表里没有找到标题为「\(name)」的笔记")
         return card
     }
@@ -45,27 +35,54 @@ final class LibraryFeatureTests: NoteUITestCase {
         let card = app.staticTexts[name]
 
         openContextMenu(on: card)
-        let fav = app.buttons["收藏"]
+        let fav = app.buttons["menu-favorite"]
         XCTAssertTrue(fav.waitForExistence(timeout: 8), "长按菜单里没有「收藏」")
         fav.tap()
-        usleep(800_000)
+        // 菜单收起有动画，收起前点下面的 chip 会被遮罩吞掉，
+        // 筛选根本没切过去，但「目标还在」的断言却会误判为通过
+        XCTAssertTrue(fav.waitForNonExistence(timeout: 5), "收藏之后长按菜单没有收起")
+        XCTAssertTrue(app.staticTexts[name].waitForExistence(timeout: 5))
+        // 元素从树里消失 ≠ 收起动画结束；遮罩还在时点击会被吞掉
+        usleep(600_000)
 
-        // 切到收藏筛选，这本必须还在
-        let chip = app.buttons["收藏"]
-        XCTAssertTrue(chip.waitForExistence(timeout: 8), "顶部没有收藏筛选")
-        chip.tap()
-        usleep(900_000)
+        // 切到收藏筛选。菜单收起动画期间快照里的 chip frame 可能是过期的，
+        // 第一次点可能落空甚至误开笔记；以探针为准，只有没生效才补点——
+        // 旧写法按 chip 的选中态判断，而那个状态永远不更新，补点会把筛选点开又点回去
+        let probe = app.staticTexts["libraryProbe"].firstMatch
+        XCTAssertTrue(probe.waitForExistence(timeout: 8),
+                      "找不到筛选状态探针（-uiTestProbe 没生效？）")
+        func filterOn() -> Bool { probe.exists && probe.label.hasPrefix("favorites=1") }
+        for attempt in 0..<3 {
+            if filterOn() { break }
+            // 点歪进了编辑器：先退回列表再继续
+            if !probe.exists, app.buttons["返回笔记列表"].waitForExistence(timeout: 3) {
+                app.buttons["返回笔记列表"].tap()
+                XCTAssertTrue(probe.waitForExistence(timeout: 8), "退回列表后探针没回来")
+            }
+            let chip = app.buttons["filter-收藏"].firstMatch
+            XCTAssertTrue(chip.waitForExistence(timeout: 8), "顶部没有收藏筛选")
+            chip.tap()
+            let deadline = Date().addingTimeInterval(2.5)
+            while !filterOn(), Date() < deadline { usleep(100_000) }
+            if attempt == 2 { break }
+        }
+        XCTAssertTrue(filterOn(), "点了收藏筛选，但筛选没有切换过去")
         XCTAssertTrue(app.staticTexts[name].waitForExistence(timeout: 10),
                       "收藏之后在收藏筛选里看不到这本笔记")
 
         // 取消收藏，收藏筛选里应当消失
-        openContextMenu(on: app.staticTexts[name])
-        let unfav = app.buttons["取消收藏"]
+        openContextMenu(on: app.staticTexts[name].firstMatch)
+        let unfav = app.buttons["menu-favorite"]
         XCTAssertTrue(unfav.waitForExistence(timeout: 8), "菜单里没有「取消收藏」")
+        // 标识不随文案变，再用文案确认这次真的是「取消收藏」
+        XCTAssertTrue(app.buttons["取消收藏"].waitForExistence(timeout: 3),
+                      "菜单里显示的还是「收藏」，说明刚才没收藏上")
         unfav.tap()
-        usleep(900_000)
-        XCTAssertFalse(app.staticTexts[name].exists,
-                       "取消收藏之后仍然出现在收藏筛选里")
+        XCTAssertTrue(unfav.waitForNonExistence(timeout: 5), "取消收藏之后长按菜单没有收起")
+        usleep(600_000)
+        // 等卡片真的消失，而不是赌固定 900ms；筛选没反应时这里会等满再失败
+        XCTAssertTrue(app.staticTexts[name].waitForNonExistence(timeout: 8),
+                      "取消收藏之后仍然出现在收藏筛选里")
     }
 
     // MARK: - 2. 搜索
@@ -99,8 +116,8 @@ final class LibraryFeatureTests: NoteUITestCase {
         let app = launch(fingerDraws: false)
         createNote(titled: before, in: app)
 
-        openContextMenu(on: app.staticTexts[before])
-        let rename = app.buttons["重命名"]
+        openContextMenu(on: app.staticTexts[before].firstMatch)
+        let rename = app.buttons["menu-rename"]
         XCTAssertTrue(rename.waitForExistence(timeout: 8), "长按菜单里没有「重命名」")
         rename.tap()
 
@@ -108,8 +125,8 @@ final class LibraryFeatureTests: NoteUITestCase {
         XCTAssertTrue(field.waitForExistence(timeout: 6), "重命名弹窗里没有输入框")
         field.tap()
         field.clearAndType(after)
-        app.buttons["保存"].tap()
-        usleep(1_000_000)
+        // 列表侧弹窗同样会吞掉落定前的那次保存点击，与编辑器改名共用兜底
+        commitRenameAlert(in: app, field: field, expected: after)
 
         XCTAssertTrue(app.staticTexts[after].waitForExistence(timeout: 10),
                       "列表里的标题没有更新")
@@ -123,8 +140,8 @@ final class LibraryFeatureTests: NoteUITestCase {
         let app = launch(fingerDraws: false)
         createNote(titled: name, in: app)
 
-        openContextMenu(on: app.staticTexts[name])
-        let del = app.buttons["删除"]
+        openContextMenu(on: app.staticTexts[name].firstMatch)
+        let del = app.buttons["menu-delete"]
         XCTAssertTrue(del.waitForExistence(timeout: 8), "长按菜单里没有「删除」")
         del.tap()
         usleep(1_200_000)
@@ -142,15 +159,14 @@ final class LibraryFeatureTests: NoteUITestCase {
         let app = launch(fingerDraws: false)
         createNote(titled: name, in: app)
 
-        let before = app.staticTexts.matching(identifier: name).count
-        openContextMenu(on: app.staticTexts[name])
-        let dup = app.buttons["复制副本"]
+        openContextMenu(on: app.staticTexts[name].firstMatch)
+        let dup = app.buttons["menu-duplicate"]
         XCTAssertTrue(dup.waitForExistence(timeout: 8), "长按菜单里没有「复制副本」")
         dup.tap()
         usleep(1_200_000)
 
-        let after = app.staticTexts.matching(identifier: name).count
-        XCTAssertGreaterThan(after, before,
-                             "复制副本之后列表里没有多出一本（\(before) → \(after)）")
+        // 副本会改名成「原名 副本」，所以不能数同名卡片
+        XCTAssertTrue(app.staticTexts["\(name) 副本"].waitForExistence(timeout: 10),
+                      "复制副本之后列表里没有出现「\(name) 副本」")
     }
 }

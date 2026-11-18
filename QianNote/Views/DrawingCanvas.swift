@@ -125,7 +125,7 @@ final class CanvasController: NSObject, ObservableObject {
     /// 系统 undo/redo 与自研栈通过「反向注册」互相衔接，天然自平衡，无需手动重建。
     private func registerSystemUndo() {
         guard let um = systemUndoManager else { return }
-        um.registerUndo(withTarget: self) { [weak self] target in
+        um.registerUndo(withTarget: self) { target in
             target.undoFromSystem()
         }
         um.setActionName("写字")
@@ -143,7 +143,7 @@ final class CanvasController: NSObject, ObservableObject {
         func registerOneLevel() {
             guard remaining > 0 else { return }
             remaining -= 1
-            um.registerUndo(withTarget: self) { [weak self] target in
+            um.registerUndo(withTarget: self) { target in
                 target.undoFromSystem()
             }
             DispatchQueue.main.async { registerOneLevel() }
@@ -155,7 +155,7 @@ final class CanvasController: NSObject, ObservableObject {
     /// 此刻 UndoManager 正在撤销，`registerUndo` 会落到 redo 栈，正好注册「重做」反向动作。
     @objc func undoFromSystem() {
         if let um = systemUndoManager {
-            um.registerUndo(withTarget: self) { [weak self] target in
+            um.registerUndo(withTarget: self) { target in
                 target.redoFromSystem()
             }
         }
@@ -165,7 +165,7 @@ final class CanvasController: NSObject, ObservableObject {
     /// 系统发起的重做：反向注册「撤销」动作，再前进一步。
     @objc func redoFromSystem() {
         if let um = systemUndoManager {
-            um.registerUndo(withTarget: self) { [weak self] target in
+            um.registerUndo(withTarget: self) { target in
                 target.undoFromSystem()
             }
         }
@@ -414,6 +414,9 @@ struct DrawingCanvas: UIViewRepresentable {
         canvas.tool = tool
         // 首帧 bounds 还是 0，先寄存，等 layoutSubviews 量出尺寸再交给 PencilKit
         canvas.setDrawingWhenReady(initialDrawing)
+        // 探针必须反映「当前显示页」：进页 / 换页时先把这一页的真实读数交出去，
+        // 否则它会一直停在上一页，跨页比较全错
+        InkProbe.shared.update(initialDrawing)
 
         let coordinator = context.coordinator
         // 关键：没有 delegate 就不会有 canvasViewDrawingDidChange，
@@ -791,6 +794,8 @@ struct DrawingCanvas: UIViewRepresentable {
             }
             (canvas as? TrackingCanvasView)?.pinViewport()
             (boundController ?? parent.controller).currentDrawing = drawing
+            // notify=false 的换页 / 恢复也要更新探针，否则读数停在旧页
+            InkProbe.shared.update(drawing)
             if notify {
                 saveToOwner(drawing)
             }

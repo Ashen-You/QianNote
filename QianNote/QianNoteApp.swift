@@ -4,8 +4,17 @@ import UIKit
 @main
 struct QianNoteApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @StateObject private var store = NoteStore()
+    @StateObject private var store = QianNoteApp.makeStore()
     @StateObject private var opener = DocumentOpenCoordinator()
+
+    /// UI 测试带 `-uiTestResetData` 启动时清空存储，保证每条用例从干净状态开始；
+    /// 正常启动完全不受影响。
+    private static func makeStore() -> NoteStore {
+        if ProcessInfo.processInfo.arguments.contains("-uiTestResetData") {
+            NoteStore().destroyStorageForTesting()
+        }
+        return NoteStore()
+    }
 
     var body: some Scene {
         WindowGroup {

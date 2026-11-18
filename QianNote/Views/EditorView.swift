@@ -110,6 +110,14 @@ struct EditorView: View {
                     .opacity(0.01)
                     .allowsHitTesting(false)
                     .accessibilityIdentifier("inkProbe")
+                // 菜单里的 Toggle 状态读不可靠，测试直接读这里：
+                // 值就是当前真正生效的模式（多页 + 连续滚动）
+                Text("continuous=\(continuous && (note?.pages.count ?? 0) > 1 ? 1 : 0)")
+                    .font(.system(size: 1))
+                    .frame(width: 1, height: 1)
+                    .opacity(0.01)
+                    .allowsHitTesting(false)
+                    .accessibilityIdentifier("modeProbe")
             }
         }
         .overlay {
@@ -491,6 +499,9 @@ struct EditorView: View {
     }
 
     private func applySharedInk(_ global: PKDrawing, note: Note) {
+        // 连续滚动模式由整本共享画布落墨，不经过单页 DrawingCanvas 的落盘路径，
+        // 这里补一次探针更新，UI 测试两种模式下读到的都是真实墨迹
+        InkProbe.shared.update(global)
         sharedInk = global
         writeBackSharedInk(global, note: note)
     }

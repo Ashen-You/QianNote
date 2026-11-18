@@ -303,8 +303,6 @@ final class ContinuousCanvasChaosTests: XCTestCase {
     // MARK: - 跨页墨迹
 
     func testCrossPageStroke_landsOnStartPageAndMergesBackIntact() {
-        let h = makeHarness()
-
         // 一笔从第 0 页底部画进第 1 页
         let start = CGPoint(x: 120, y: pageSize.height - 120)
         let end = CGPoint(x: 640, y: pageSize.height + 120)

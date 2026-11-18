@@ -93,7 +93,7 @@ final class EditorFeatureTests: NoteUITestCase {
         // 正好验证「插页之后原有墨迹还在」。这才是这条用例要守的东西。
         app.buttons["返回笔记列表"].tap()
         usleep(800_000)
-        let card = app.staticTexts["未命名笔记"]
+        let card = noteCard(app)
         XCTAssertTrue(card.waitForExistence(timeout: 12), "返回列表后找不到笔记")
         card.tap()
         XCTAssertTrue(app.buttons["返回笔记列表"].waitForExistence(timeout: 15), "没能重新进入笔记")
@@ -111,17 +111,8 @@ final class EditorFeatureTests: NoteUITestCase {
         let app = launch(fingerDraws: true)
         openNewNote(app)
 
-        // 点标题打开重命名
-        let title = app.buttons["未命名笔记"]
-        XCTAssertTrue(title.waitForExistence(timeout: 8), "找不到笔记标题按钮")
-        title.tap()
-
-        let field = app.textFields["标题"]
-        XCTAssertTrue(field.waitForExistence(timeout: 6), "重命名弹窗里没有输入框")
-        field.tap()
-        field.clearAndType("UITestNote42")
-        app.buttons["保存"].tap()
-        usleep(900_000)
+        // 点标题打开重命名（进编辑器时已经被改成用例专属标题，这里再改一次）
+        renameCurrentNote(to: "UITestNote42", in: app)
 
         XCTAssertTrue(app.buttons["UITestNote42"].waitForExistence(timeout: 8),
                       "标题没有更新成新名字")
@@ -161,9 +152,10 @@ final class EditorFeatureTests: NoteUITestCase {
         let collapse = app.buttons["收起工具栏"]
         XCTAssertTrue(collapse.waitForExistence(timeout: 8), "找不到收起工具栏按钮")
         collapse.tap()
-        usleep(500_000)
-
-        XCTAssertFalse(app.buttons["钢笔"].exists, "收起后工具栏还在")
+        // 收起有 0.22s 动画，用 waitForNonExistence 等它真的从层级里消失，
+        // 固定 sleep 会在动画中途取样，读成「还在」
+        XCTAssertTrue(app.buttons["钢笔"].waitForNonExistence(timeout: 6),
+                      "收起后工具栏还在")
         let restore = app.buttons["显示工具栏"]
         XCTAssertTrue(restore.waitForExistence(timeout: 6), "收起后没有展开入口")
         restore.tap()
@@ -214,30 +206,18 @@ final class EditorFeatureTests: NoteUITestCase {
         openNewNote(app)
         insertPages(2, in: app)
 
-        // 插页后编辑器会自动切到连续滚动（共享画布），这里确认它仍然能写
-        let more = app.buttons["更多"]
-        XCTAssertTrue(more.waitForExistence(timeout: 10))
-        more.tap()
-        let toggle = app.buttons["连续滚动"].exists
-            ? app.buttons["连续滚动"]
-            : app.switches["连续滚动"]
-        if toggle.waitForExistence(timeout: 4) {
-            // 已经是开的状态就不动它，免得关掉
-            if (toggle.value as? String) == "0" { toggle.tap() }
-            else { app.tap() }
-        } else {
-            app.tap()
-        }
-        usleep(1_500_000)
+        // 插页后编辑器会自动切到连续滚动（共享画布），这里确认它仍然能写。
+        // 连续滚动下一屏跨多页、纸面位置没法定，改用探针读「笔画长度真的变长」。
+        setContinuousScroll(true, in: app)
 
-        let gained = drawAndConfirm(app, from: CGVector(dx: 0.30, dy: 0.34),
-                                    to: CGVector(dx: 0.72, dy: 0.44))
-        XCTAssertGreaterThan(gained, 200, "连续滚动模式下画不出墨")
+        let gained = drawStroke(app, from: CGVector(dx: 0.30, dy: 0.34),
+                                to: CGVector(dx: 0.72, dy: 0.44))
+        XCTAssertGreaterThan(gained, 20, "连续滚动模式下画不出墨")
 
         // 再写一笔，确认共享画布没有被反复重建打断
-        let second = drawAndConfirm(app, from: CGVector(dx: 0.30, dy: 0.52),
-                                    to: CGVector(dx: 0.72, dy: 0.60))
-        XCTAssertGreaterThan(second, 150, "连续滚动模式下第二笔画不上")
+        let second = drawStroke(app, from: CGVector(dx: 0.30, dy: 0.52),
+                                to: CGVector(dx: 0.72, dy: 0.60))
+        XCTAssertGreaterThan(second, 20, "连续滚动模式下第二笔画不上")
     }
 
     // MARK: - 9. 缩放之后仍能书写
@@ -249,16 +229,17 @@ final class EditorFeatureTests: NoteUITestCase {
         app.pinch(withScale: 2.0, velocity: 1.5)
         usleep(1_200_000)
 
-        let zoomed = drawAndConfirm(app, from: CGVector(dx: 0.30, dy: 0.40),
-                                    to: CGVector(dx: 0.70, dy: 0.50))
-        XCTAssertGreaterThan(zoomed, 200, "放大之后写不出墨")
+        // 缩放后纸面位置变了，按屏幕像素取样不可靠；断言「笔真的落到画布上」即可
+        let zoomed = drawStroke(app, from: CGVector(dx: 0.30, dy: 0.40),
+                                to: CGVector(dx: 0.70, dy: 0.50))
+        XCTAssertGreaterThan(zoomed, 20, "放大之后写不出墨")
 
         app.pinch(withScale: 0.5, velocity: -1.5)
         usleep(1_200_000)
 
-        let back = drawAndConfirm(app, from: CGVector(dx: 0.30, dy: 0.60),
-                                  to: CGVector(dx: 0.70, dy: 0.70))
-        XCTAssertGreaterThan(back, 200, "缩回去之后写不出墨")
+        let back = drawStroke(app, from: CGVector(dx: 0.30, dy: 0.60),
+                              to: CGVector(dx: 0.70, dy: 0.70))
+        XCTAssertGreaterThan(back, 20, "缩回去之后写不出墨")
     }
 
     // MARK: - 10. 快速切工具

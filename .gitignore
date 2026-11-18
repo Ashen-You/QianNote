@@ -6,3 +6,6 @@ xcuserdata/
 *.ipa
 *.dSYM.zip
 .DS_Store
+
+# 本地工具配置
+.qoder/
