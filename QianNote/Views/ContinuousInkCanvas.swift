@@ -9,19 +9,24 @@ import UIKit
 /// UIScrollView            ← 唯一负责滚动 + 缩放（原生 pinch / viewForZooming）
 /// └─ contentView          ← 逻辑尺寸（页宽 × 页高×页数），随 scroll.zoomScale 整体缩放
 ///    ├─ host.view         ← 所有页无缝拼接的背景（纸张 / PDF / 图片 / 文字框）
-///    └─ PKCanvasView      ← 整本笔记唯一的画布，逻辑尺寸，zoomScale 恒为 1
+///    └─ PKCanvasView      ← 整本笔记唯一的画布，滑动窗口（可视区域附近约 3 屏），zoomScale 恒为 1
 /// ```
 ///
-/// 三个关键决定，都是为了消灭「频闪 / 滚动偏移 / 笔迹断层」：
+/// 关键决定，都是为了消灭「频闪 / 实时笔迹不可见 / 滚动偏移 / 笔迹断层」：
 ///
-/// 1. **画布和背景在同一个坐标系里**。两者都是逻辑尺寸、都是 contentView 的直接子视图，
-///    由同一个 `zoomScale` 一起放大。不再需要把 `scroll.contentOffset` 抄给 `canvas.contentOffset`，
-///    也就不存在两套坐标系半帧不同步导致的背景与墨迹错位、笔迹被切成两段。
+/// 1. **画布和背景在同一个坐标系里**。两者都是 contentView 的直接子视图，
+///    由同一个 `zoomScale` 一起放大；画布用 `frame.origin.y == contentOffset.y` 的滑动窗口
+///    截取这段坐标系（见第 4 点），墨迹屏幕位置恒等于背景上的逻辑位置。
 /// 2. **画布的 `zoomScale` 恒为 1**。PencilKit 自身的缩放和外部 scroll 的缩放叠加时，
 ///    墨迹会被渲染两遍（分块重采样），在页内留下接缝。让画布永远是 1:1，缩放交给上层唯一一处。
 /// 3. **不往 SwiftUI 回写缩放比例**。上一版把 `displayScale` 回传给背景做 `scaleEffect`，
 ///    每帧写 @State 都会重建整个 body（几十个 NotePageView），这就是频闪和卡顿的根源。
 ///    现在背景按逻辑尺寸排版，缩放完全由 UIKit 侧承担，SwiftUI 一次都不用刷新。
+/// 4. **画布 bounds 是滑动的窗口，不是整本高度**。12 页笔记整本高 12288pt（@2x = 24576px），
+///    超过 Metal 单张纹理 16384px 上限；PencilKit 按 bounds 分配帧缓冲，分配失败后
+///    实时笔迹层不存在（写字时看不到墨）、瓦片渲染错乱（旧笔迹闪没、点一下整块变白）。
+///    窗口高度封顶 3072pt（@2x = 6144px），只在可视区域离开窗口时整体滑动。
+///    contentSize 仍是整本尺寸，墨迹仍是全局坐标，跨页连续笔画与归页逻辑都不受影响。
 ///
 /// 因为只有一块画布，笔从页 A 底部划到页 B 顶部时是一条连续的笔画，
 /// 抬笔后再由 `InkComposer.split` 按页边界归页落盘。
@@ -31,6 +36,10 @@ struct ContinuousInkCanvas<Background: View>: UIViewRepresentable {
     let pageCount: Int
     /// 全局坐标的墨迹（第 i 页原点在 y = i * pageHeight）
     let globalDrawing: PKDrawing
+    /// 外部替换整本墨迹的版本号（加载 / 页数变化时自增）。
+    /// 用它判断是否要回写画布；每次刷新都序列化整本 drawing 做字节比较，
+    /// 在长笔记里是实打实的主线程开销。
+    let drawingRevision: Int
     let tool: PKTool
     /// 工具的稳定标识（PKTool 不支持相等比较，用它判断是否需要重设）
     let toolKey: String
@@ -54,6 +63,9 @@ struct ContinuousInkCanvas<Background: View>: UIViewRepresentable {
     let onDrawingChange: (PKDrawing) -> Void
 
     let background: Background
+    /// 背景内容的版本号（笔记内容 / 工具变化才变）。
+    /// 滚动翻页、缩放会高频触发 SwiftUI 刷新，这些刷新不该把整条页面背景重建一遍。
+    let backgroundKey: Int
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -154,6 +166,9 @@ struct ContinuousInkCanvas<Background: View>: UIViewRepresentable {
         private var appliedPageCount: Int = 0
         /// 最近一次由我们写入的缩放倍率（1 = 适应宽度），避免回环
         private var appliedZoomLevel: CGFloat = 0
+        /// 最近一次写进画布的墨迹版本 / 背景版本
+        private var appliedDrawingRevision = -1
+        private var appliedBackgroundKey: Int?
         /// 最近一次由代码驱动滚动（跳页），期间不要把偏移反算成页码
         private var isSyncing = false
         private var isPinching = false
@@ -161,6 +176,12 @@ struct ContinuousInkCanvas<Background: View>: UIViewRepresentable {
         private var pendingSave: DispatchWorkItem?
         /// 由滚动位置上报的页码（区分「用户滚动」与「外部跳页」）
         private var syncedPage: Int = 0
+        /// 画布窗口（contentView 逻辑坐标）。见 updateCanvasWindow
+        private var canvasWindow: CGRect = .zero
+        /// 书写中窗口冻结，离开窗口时记下来，抬笔后再滑
+        private var needsCanvasWindowUpdate = false
+        /// 窗口高度上限（逻辑点）：@2x 屏 6144px，离 Metal 单张纹理 16384px 上限很远
+        private let maxCanvasWindowHeight: CGFloat = 3072
 
         init(_ parent: ContinuousInkCanvas) {
             self.parent = parent
@@ -178,6 +199,7 @@ struct ContinuousInkCanvas<Background: View>: UIViewRepresentable {
             host.view.autoresizingMask = []
             self.host = host
             view.contentView.insertSubview(host.view, at: 0)
+            appliedBackgroundKey = parent.backgroundKey
 
             view.scroll.delegate = self
             view.canvas.delegate = self
@@ -185,6 +207,7 @@ struct ContinuousInkCanvas<Background: View>: UIViewRepresentable {
             view.canvas.tool = parent.tool
             view.canvas.passesFingersThrough = parent.passesFingersThrough
             view.canvas.drawing = parent.globalDrawing
+            appliedDrawingRevision = parent.drawingRevision
             view.canvas.drawingGestureRecognizer.isEnabled = parent.isDrawingEnabled
             applyScrollTouchRules(in: view)
 
@@ -217,6 +240,7 @@ struct ContinuousInkCanvas<Background: View>: UIViewRepresentable {
             guard let view = container, view.bounds.width > 1 else { return }
             applyLogicalSize(view)
             applyZoom(in: view, force: false)
+            updateCanvasWindow(in: view, force: false)
         }
 
 
@@ -243,12 +267,16 @@ struct ContinuousInkCanvas<Background: View>: UIViewRepresentable {
             applyScrollTouchRules(in: view)
 
             // 背景内容
-            if let host { host.rootView = AnyView(parent.background) }
+            if let host, appliedBackgroundKey != parent.backgroundKey {
+                appliedBackgroundKey = parent.backgroundKey
+                host.rootView = AnyView(parent.background)
+            }
 
             applyLogicalSize(view)
 
             // 墨迹（只在外部主动替换时写回，避免打断正在写的这一笔）
-            if !isWriting, view.canvas.drawing.dataRepresentation() != parent.globalDrawing.dataRepresentation() {
+            if !isWriting, appliedDrawingRevision != parent.drawingRevision {
+                appliedDrawingRevision = parent.drawingRevision
                 isApplyingDrawing = true
                 view.canvas.drawing = parent.globalDrawing
                 isApplyingDrawing = false
@@ -261,6 +289,9 @@ struct ContinuousInkCanvas<Background: View>: UIViewRepresentable {
             if parent.currentPage != syncedPage {
                 scrollToPage(parent.currentPage, in: view)
             }
+
+            // 外部替换整本墨迹可能扰动画布的 contentOffset，这里兜底对齐
+            applyCanvasWindow(in: view)
         }
 
         // MARK: 尺寸
@@ -312,9 +343,9 @@ struct ContinuousInkCanvas<Background: View>: UIViewRepresentable {
             // layoutSubviews 内部又请求一次布局，形成 observation 反馈循环。
             host?.view.frame = CGRect(origin: .zero, size: logical)
 
-            view.canvas.frame = CGRect(origin: .zero, size: logical)
+            // 画布的 contentSize 仍是整本尺寸（墨迹用全局坐标），
+            // 但 bounds 只是可视区域附近的滑动窗口（见 updateCanvasWindow）
             view.canvas.contentSize = logical
-            view.canvas.contentOffset = .zero
 
             // UIScrollView 不会因为我们手改了 zoom 视图的尺寸就重算 contentSize，
             // 内容尺寸变了它仍然用旧值 —— 滚动范围会不对（滚不到底 / 滚过头）。这里显式同步。
@@ -323,6 +354,62 @@ struct ContinuousInkCanvas<Background: View>: UIViewRepresentable {
 
             // 尺寸变了缩放比例也要重算（fit 依赖视口宽度，内容高度依赖页数）
             applyZoom(in: view, force: true)
+            updateCanvasWindow(in: view, force: true)
+        }
+
+        /// 把画布收窄成「可视区域附近的一段」，随滚动滑动。
+        ///
+        /// PencilKit 按画布 bounds 分配 Metal 帧缓冲。若 bounds 等于整本高度
+        /// （12 页 × 1024pt = 12288pt，@2x = 24576px），超出单张纹理 16384px 上限，
+        /// 帧缓冲分配失败 —— 实时笔迹层消失（写字时看不到笔迹）、瓦片渲染错乱
+        /// （旧笔迹闪一下消失、点一下整块变白）。窗口高度封顶 3072pt 就永远不会触顶。
+        ///
+        /// 坐标系不变：contentSize 仍是整本，墨迹仍是全局坐标。只要
+        /// `frame.origin.y == contentOffset.y == 窗口原点`，画布局部坐标 y 映射回内容坐标
+        /// 恰好是 y（frame.origin + (y − contentOffset)），墨迹与背景始终严丝合缝。
+        private func updateCanvasWindow(in view: ContainerView, force: Bool) {
+            let logical = logicalSize
+            let scale = max(view.scroll.zoomScale, 0.0001)
+            let visibleHeight = min(view.bounds.height / scale, logical.height)
+            guard visibleHeight > 0.5 else { return }
+            let visibleTop = min(max(view.scroll.contentOffset.y / scale, 0),
+                                 max(logical.height - visibleHeight, 0))
+            let visible = CGRect(x: 0, y: visibleTop, width: logical.width, height: visibleHeight)
+
+            // 高度与原点都取整点：PKCanvasView 会把非整数 contentOffset 取整，
+            // 若 frame.origin 带小数，两者就会差零点几 pt —— 墨迹相对背景微移。
+            let height = min(logical.height,
+                             max(pageHeight, min(visibleHeight * 3, maxCanvasWindowHeight))).rounded()
+            let contained = canvasWindow.height > 0
+                && abs(canvasWindow.height - height) <= 0.5
+                && canvasWindow.minY <= visible.minY + 0.5
+                && canvasWindow.maxY >= visible.maxY - 0.5
+            // 窗口还盖得住可视区域就不动：滑动会触发整块瓦片重绘
+            if !force && contained { return }
+            // 书写中不能挪画布，抬笔后再补（挪动本身不会丢墨，但会打断这一笔的渲染）
+            if isWriting && !force {
+                needsCanvasWindowUpdate = true
+                return
+            }
+            needsCanvasWindowUpdate = false
+
+            let centered = (visible.midY - height / 2).rounded()
+            let maxOriginY = max((logical.height - height).rounded(.down), 0)
+            let originY = min(max(centered, 0), maxOriginY)
+            canvasWindow = CGRect(x: 0, y: originY, width: logical.width, height: height)
+            applyCanvasWindow(in: view)
+        }
+
+        /// 把窗口写进画布。frame 和 contentOffset 必须是同一个值，
+        /// 否则墨迹会相对背景错位（旧版闪动的来源就是两套坐标系不同步）。
+        private func applyCanvasWindow(in view: ContainerView) {
+            guard canvasWindow.height > 0 else { return }
+            let logical = logicalSize
+            if view.canvas.contentSize != logical { view.canvas.contentSize = logical }
+            if view.canvas.frame != canvasWindow { view.canvas.frame = canvasWindow }
+            if abs(view.canvas.contentOffset.y - canvasWindow.minY) > 0.01 {
+                view.canvas.contentOffset = CGPoint(x: 0, y: canvasWindow.minY)
+            }
         }
 
         /// 唯一的缩放入口：设置 scroll 的 zoomScale，背景与墨迹一起变。
@@ -362,12 +449,15 @@ struct ContinuousInkCanvas<Background: View>: UIViewRepresentable {
 
             view.scroll.zoomScale = clamped
 
-            guard !isFirstApply, oldScale > 0.0001, view.scroll.zoomScale > 0.0001 else { return }
-            // 用户缩放：保持视口中心对应的内容点不动，避免一下跳到左上角
-            let ratio = view.scroll.zoomScale / oldScale
-            let centered = CGPoint(x: (anchor.x + view.bounds.width / 2) * ratio - view.bounds.width / 2,
-                                   y: (anchor.y + view.bounds.height / 2) * ratio - view.bounds.height / 2)
-            view.scroll.contentOffset = clampOffset(centered, in: view)
+            if !isFirstApply, oldScale > 0.0001, view.scroll.zoomScale > 0.0001 {
+                // 用户缩放：保持视口中心对应的内容点不动，避免一下跳到左上角
+                let ratio = view.scroll.zoomScale / oldScale
+                let centered = CGPoint(x: (anchor.x + view.bounds.width / 2) * ratio - view.bounds.width / 2,
+                                       y: (anchor.y + view.bounds.height / 2) * ratio - view.bounds.height / 2)
+                view.scroll.contentOffset = clampOffset(centered, in: view)
+            }
+            // 缩放改变可视高度，窗口高度也要跟着变
+            updateCanvasWindow(in: view, force: false)
         }
 
         private func clampOffset(_ offset: CGPoint, in view: ContainerView) -> CGPoint {
@@ -408,14 +498,22 @@ struct ContinuousInkCanvas<Background: View>: UIViewRepresentable {
         // MARK: UIScrollViewDelegate
 
         func viewForZooming(in scrollView: UIScrollView) -> UIView? {
-            container?.contentView
+            guard let container, scrollView === container.scroll else { return nil }
+            return container.contentView
         }
 
         func scrollViewWillBeginZooming(_ scrollView: UIScrollView, with view: UIView?) {
+            guard let container, scrollView === container.scroll else { return }
             isPinching = true
         }
 
         func scrollViewDidScroll(_ scrollView: UIScrollView) {
+            // 画布自己的 contentOffset 变化（窗口滑动）也会走到这里，不能混为一谈
+            guard let container, scrollView === container.scroll else { return }
+            // 可视区域挪出窗口就滑窗口（跳页的动画滚动也要跟），书写期间冻结
+            if !isPinching {
+                updateCanvasWindow(in: container, force: false)
+            }
             guard !isSyncing else { return }
             let unit = pageHeight * max(scrollView.zoomScale, 0.001)
             let raw = scrollView.contentOffset.y / unit
@@ -429,8 +527,8 @@ struct ContinuousInkCanvas<Background: View>: UIViewRepresentable {
         }
 
         func scrollViewDidEndZooming(_ scrollView: UIScrollView, with view: UIView?, atScale scale: CGFloat) {
+            guard let container, scrollView === container.scroll else { return }
             isPinching = false
-            guard let container else { return }
             let fit = fitScale(in: container)
             guard fit > 0.0001 else { return }
             let level = clampZoomLevel(scrollView.zoomScale / fit)
@@ -438,6 +536,7 @@ struct ContinuousInkCanvas<Background: View>: UIViewRepresentable {
             if abs(parent.zoom - level) > 0.005 {
                 parent.zoom = level
             }
+            updateCanvasWindow(in: container, force: false)
         }
 
         // MARK: PKCanvasViewDelegate
@@ -455,6 +554,10 @@ struct ContinuousInkCanvas<Background: View>: UIViewRepresentable {
 
         func canvasViewDidEndUsingTool(_ canvasView: PKCanvasView) {
             isWriting = false
+            // 书写期间可视区域挪出了窗口，抬笔后补滑（否则墨迹可能落在窗口外看不到）
+            if needsCanvasWindowUpdate, let container {
+                updateCanvasWindow(in: container, force: true)
+            }
             scheduleSave()
         }
 

@@ -52,6 +52,9 @@ struct EditorView: View {
     /// 连续滚动模式下整本笔记的墨迹（全局坐标，第 i 页原点在 y = i * pageHeight）。
     /// 这块画布是唯一的书写层，所以笔可以跨页连续画。
     @State private var sharedInk = PKDrawing()
+    /// 外部替换 sharedInk 的版本号。画布靠它决定要不要回写，
+    /// 不用每次 SwiftUI 刷新都序列化整本 drawing 做字节比较。
+    @State private var sharedInkRevision = 0
 
     enum EditorSheet: Identifiable {
         case share(URL)
@@ -417,8 +420,16 @@ struct EditorView: View {
                 .frame(width: pageWidth, height: pageHeight)
                 .scaleEffect(fit * zoom, anchor: .center)
                 .frame(width: contentWidth, height: contentHeight)
-                .shadow(color: Color.black.opacity(immersive ? 0 : 0.18),
-                        radius: immersive ? 0 : 22, x: 0, y: immersive ? 0 : 10)
+                // 页面投影单独垫一层，别让 .shadow 套在整页上：阴影会把整棵子树
+                // 拉进离屏合成，而 PencilKit 的实时笔迹层不参与离屏快照，
+                // 真机上可能出现「写的时候看不到这一笔」。
+                .background {
+                    if !immersive {
+                        Rectangle()
+                            .fill(Color.white)
+                            .shadow(color: Color.black.opacity(0.18), radius: 22, x: 0, y: 10)
+                    }
+                }
                 .offset(clampedPan(contentSize: CGSize(width: contentWidth, height: contentHeight),
                                    viewport: geo.size))
                 .frame(width: geo.size.width, height: geo.size.height)
@@ -454,6 +465,7 @@ struct EditorView: View {
             pageSize: note.pageSize,
             pageCount: note.pages.count,
             globalDrawing: sharedInk,
+            drawingRevision: sharedInkRevision,
             tool: tools.pkTool,
             toolKey: tools.toolKey,
             isDrawingEnabled: !tools.isHandTool,
@@ -466,7 +478,8 @@ struct EditorView: View {
             zoom: $zoom,
             currentPage: $pageIndex,
             onDrawingChange: { applySharedInk($0, note: note) },
-            background: pageStack(note)
+            background: pageStack(note),
+            backgroundKey: backgroundKey(note)
         )
         .onAppear { loadSharedInk(note) }
         .onChange(of: note.pages.count) { _, _ in loadSharedInk(note) }
@@ -499,6 +512,23 @@ struct EditorView: View {
     private func loadSharedInk(_ note: Note) {
         let drawings = note.pages.map { store.drawing(noteID: note.id, pageID: $0.id) }
         sharedInk = InkComposer.merge(pageDrawings: drawings, pageHeight: note.pageSize.height)
+        sharedInkRevision &+= 1
+    }
+
+    /// 背景层的版本：只包含会影响背景的笔记字段（页内容 / 纸张 / PDF）与工具。
+    /// 刻意不含 updatedAt —— 书写落盘会周期性 bump 它，带上就会把整条背景反复重建。
+    private func backgroundKey(_ note: Note) -> Int {
+        var hasher = Hasher()
+        hasher.combine(note.id)
+        hasher.combine(note.pages)
+        hasher.combine(note.paperTemplate)
+        hasher.combine(note.paperTint)
+        hasher.combine(note.pageWidth)
+        hasher.combine(note.pageHeight)
+        hasher.combine(note.pdfFileName)
+        hasher.combine(note.pdfPageCount)
+        hasher.combine(tools.toolKey)
+        return hasher.finalize()
     }
 
     private func applySharedInk(_ global: PKDrawing, note: Note) {
