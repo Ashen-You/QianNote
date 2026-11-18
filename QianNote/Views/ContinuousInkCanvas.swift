@@ -183,16 +183,30 @@ struct ContinuousInkCanvas<Background: View>: UIViewRepresentable {
             view.canvas.fingerDraws = parent.fingerDrawing
             view.canvas.drawing = parent.globalDrawing
             view.canvas.drawingGestureRecognizer.isEnabled = parent.isDrawingEnabled
-            applyFingerScrollRule(in: view)
+            applyScrollTouchRules(in: view)
 
             view.onLayout = { [weak self] in self?.handleLayout() }
 
             applyLogicalSize(view)
         }
 
-        /// 手指书写模式下，单指要留给画布，滚动改由双指完成（与原生 App Store 一致）
-        private func applyFingerScrollRule(in view: ContainerView) {
-            view.scroll.panGestureRecognizer.minimumNumberOfTouches = parent.fingerDrawing ? 2 : 1
+        /// 手指书写模式下，单指要留给画布，滚动改由双指完成（与原生 App Store 一致）。
+        /// 笔可书写时（拖动工具之外）滚动只认手指：UIScrollView 的平移手势默认
+        /// 也接受 Apple Pencil，不排除的话 Pencil 一落纸就被滚动抢走，
+        /// 表现为「不管选哪支笔都只能拖动页面、写不出字」。
+        private func applyScrollTouchRules(in view: ContainerView) {
+            let pan = view.scroll.panGestureRecognizer
+            let minTouches = parent.fingerDrawing ? 2 : 1
+            if pan.minimumNumberOfTouches != minTouches {
+                pan.minimumNumberOfTouches = minTouches
+            }
+            let touchTypes: [NSNumber] = parent.isDrawingEnabled
+                ? [NSNumber(value: UITouch.TouchType.direct.rawValue)]
+                : [NSNumber(value: UITouch.TouchType.direct.rawValue),
+                   NSNumber(value: UITouch.TouchType.pencil.rawValue)]
+            if pan.allowedTouchTypes != touchTypes {
+                pan.allowedTouchTypes = touchTypes
+            }
         }
 
         /// 视口尺寸确定（或发生变化）后重算缩放
@@ -220,8 +234,9 @@ struct ContinuousInkCanvas<Background: View>: UIViewRepresentable {
             if view.canvas.fingerDraws != parent.fingerDrawing {
                 view.canvas.fingerDraws = parent.fingerDrawing
                 view.canvas.drawingPolicy = parent.fingerDrawing ? .anyInput : .pencilOnly
-                applyFingerScrollRule(in: view)
             }
+            // 工具切换会同时改变「能否书写」与手指/笔的滚动归属
+            applyScrollTouchRules(in: view)
 
             // 背景内容
             if let host { host.rootView = AnyView(parent.background) }
