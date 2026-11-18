@@ -1,10 +1,10 @@
 # Qian's Note — iPad 手写笔记 App
 
-一个用 **SwiftUI + PencilKit** 编写的 iPad 手写笔记应用，覆盖手写、PDF 批注、多页笔记、文档导入与导出。当前版本 **v2.1.2（build 18）**。
+一个用 **SwiftUI + PencilKit** 编写的 iPad 手写笔记应用，覆盖手写、PDF 批注、多页笔记、文档导入与导出。当前版本 **v2.1.3（build 19）**。
 
 工程名、Bundle ID、数据目录、类型名均已统一为 **QianNote**，App 显示名为 **Qian's Note**。工程不含签名配置，打开后选择自己的开发者 Team 即可编译运行。
 
-> 版本说明：v2.0.0 已移除录音与逐笔回放，v2.1.1 已移除手写 OCR，v2.1.2 修复连续滚动下 Pencil 被滚动手势抢走、无法书写。搜索只匹配笔记标题与文字框，不再索引手写内容。
+> 版本说明：v2.0.0 已移除录音与逐笔回放，v2.1.1 已移除手写 OCR；v2.1.2 修复连续滚动下 Pencil 被滚动手势抢走，v2.1.3 修复随后出现的「选了笔 Pencil 却既写不出也拖不动」。搜索只匹配笔记标题与文字框，不再索引手写内容。
 
 ---
 
@@ -215,6 +215,7 @@ Documents/QianNote/
   2. 内层画布 `zoomScale` 始终为 1
   3. 不把缩放比例回写给 SwiftUI 状态，否则会滚动频闪
   4. 写 `contentView` 的 frame / bounds 前先移除 transform，并显式同步 `scroll.contentSize`
+- 触摸归属按**当前工具**决定，不在 `hitTest` 里用 `UIEvent.allTouches` 猜触摸类型：书写工具下 `InkCanvasView` 接收所有触摸（Pencil 落笔，手指被 `.pencilOnly` 挡住不落墨，滚动交给外层 `UIScrollView` 的 pan——祖先手势不依赖命中测试）；只有拖动 / 文字工具才整体穿透给背景层。真机上 Pencil 事件到达 `hitTest` 时不总带着触摸信息，一旦猜错，Pencil 会被当成手指放走，表现为「选了笔却既写不出也拖不动」
 
 ### 单页画布：归属与落盘
 
@@ -277,7 +278,7 @@ Documents/QianNote/
 - `EditorFeatureTests`：撤销重做、清空页、插页、重命名、全屏、工具栏收起、激光笔、连续滚动书写、捏合缩放、快速换工具、末页禁用下一页
 - `LibraryFeatureTests`：新建、重命名、收藏、复制、移动、删除、搜索、导入、备份恢复
 
-测试基类 `NoteUITestCase` 用真实触摸注入，并通过 `-uiTestProbe` 暴露的 `InkProbe` 读取当前页笔画数与墨迹包围盒；少数场景仍用截图像素增量做粗粒度断言。
+测试基类 `NoteUITestCase` 用真实触摸注入，并通过 `-uiTestProbe` 暴露的 `InkProbe` 读取当前页笔画数与墨迹包围盒；少数场景仍用截图像素增量做粗粒度断言。XCUITest 只能合成手指触摸，Pencil 路径（触摸类型、落笔）无法在模拟器覆盖，需要真机确认。
 
 UI 用例建议分批跑：
 
@@ -288,7 +289,7 @@ SIM_ID=<模拟器 UDID> bash Scripts/run_uitests_batched.sh chaos2
 
 脚本按 canvas / chaos1 / chaos2 / editor-a / editor-b / library 六批执行，批间重启模拟器。一次性串行跑全部用例时，模拟器后半段容易劣化并出现假失败；分批后结果更可信。原始日志落在 `build/uitest/`。
 
-有两台 iPad 模拟器时，用 `Scripts/run_uitests_pair.sh` 两波并行分片（模拟器保持开机，只重装 App 与 Runner），全套 37 项约二十分钟：
+有两台 iPad 模拟器时，用 `Scripts/run_uitests_pair.sh` 两波并行分片（模拟器保持开机，只重装 App 与 Runner），全套 32 项约二十分钟：
 
 ```bash
 bash Scripts/run_uitests_pair.sh          # 两波全部批次
